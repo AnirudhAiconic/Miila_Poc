@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.env
+
+# Virtual envs
+.venv/
+venv/
+
+# IDE/editor
+.vscode/
+.idea/
+*.code-workspace
+
+# Logs/outputs/uploads
+logs/
+outputs/
+uploads/
+*.log
+
+# Streamlit
+.streamlit/
+
+# Debug images
+debug_region_*.png
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node (in case of mixed projects)
+node_modules/
