@@ -8,6 +8,7 @@ import json
 import base64
 from typing import List, Dict, Any, Tuple
 from PIL import Image, ImageDraw
+from roi_fixer import ROIBoxFixer
 
 class SimpleMathChecker:
     """Simple, clean math worksheet checker"""
@@ -172,13 +173,13 @@ class SimpleMathChecker:
             
             status = problem.get('status', 'empty')
             if status == "perfect":
-                report += f"**Result:** ✅✅ Perfect! Correct answer with proper steps\n"
+                report += f"**Result:** Perfect! Correct answer with proper steps\n"
             elif status == "correct_no_steps":
-                report += f"**Result:** ✅⚠️ Correct answer but show your working\n"
+                report += f"**Result:** Correct answer but show your working\n"
             elif status == "wrong":
-                report += f"**Result:** ❌ Incorrect - try again\n"
+                report += f"**Result:** Incorrect - try again\n"
             else:
-                report += f"**Result:** ⚪ Not answered\n"
+                report += f"**Result:** Not answered\n"
             
             # Show steps if available
             steps_shown = problem.get('steps_shown', [])
@@ -197,23 +198,52 @@ class SimpleMathChecker:
             # Add feedback
             feedback = problem.get('feedback', '')
             if feedback:
-                report += f"\n**💡 Tip:** {feedback}\n"
+                report += f"\n**Tip:** {feedback}\n"
             
             report += "\n---\n\n"
         
         return report
     
-    def check_worksheet(self, image_path: str) -> Tuple[str, str, Dict[str, Any]]:
+    def check_worksheet(self, image_path: str) -> Tuple[str, str, Dict[str, Any], Dict[str, Any]]:
         """
         Complete workflow: analyze, draw feedback, generate report
         """
-        print("🔍 Analyzing worksheet...")
+        print("Analyzing worksheet...")
         analysis = self.analyze_worksheet(image_path)
+
+        # Fallback: if the model returned nothing, create 6 placeholders at known locations
+        try:
+            problems = analysis.get("problems", []) if isinstance(analysis, dict) else []
+        except Exception:
+            problems = []
+            analysis = {"problems": problems}
+
+        if not problems:
+            image = cv2.imread(image_path)
+            height, width = image.shape[:2] if image is not None else (1, 1)
+            fixer = ROIBoxFixer()
+            boxes = fixer.find_answer_locations(image_path)
+            placeholder = []
+            for idx, (x, y, w, h) in enumerate(boxes, start=1):
+                placeholder.append({
+                    "problem": f"Problem {idx}",
+                    "handwritten": "",
+                    "correct_answer": "",
+                    "status": "empty",
+                    "steps_shown": [],
+                    "correct_steps": [],
+                    "box_x": max(0.0, min(1.0, x / max(1, width))),
+                    "box_y": max(0.0, min(1.0, y / max(1, height))),
+                    "box_width": max(0.0, min(1.0, w / max(1, width))),
+                    "box_height": max(0.0, min(1.0, h / max(1, height))),
+                    "feedback": ""
+                })
+            analysis = {"problems": placeholder}
         
-        print("🎨 Drawing feedback...")
+        print("Drawing feedback...")
         annotated_path = self.draw_feedback(image_path, analysis)
         
-        print("📝 Generating report...")
+        print("Generating report...")
         report = self.generate_report(analysis)
         
         # Enhanced summary stats
@@ -235,8 +265,8 @@ class SimpleMathChecker:
         try:
             from roi_fixer import fix_worksheet_boxes
             fixed_path = fix_worksheet_boxes(annotated_path)
-            print(f"✅ Box positions fixed! Check: {fixed_path}")
-            return fixed_path, report, summary
+            print(f"Box positions fixed! Check: {fixed_path}")
+            return fixed_path, report, summary, analysis
         except Exception as e:
-            print(f"⚠️ Box fixing failed: {e}")
-            return annotated_path, report, summary
+            print(f"Box fixing failed: {e}")
+            return annotated_path, report, summary, analysis
