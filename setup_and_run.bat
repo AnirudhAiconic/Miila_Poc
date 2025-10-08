@@ -26,7 +26,9 @@ echo ✅ Setup complete! Starting servers...
 echo.
 
 echo [1/2] Starting Backend API Server...
-start "Miila Backend" cmd /k "python backend_api.py"
+:: Ensure nothing else is bound to :8000
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }" >nul 2>&1
+start "Miila Backend" cmd /k "cd /d %~dp0 && set PYTHONDONTWRITEBYTECODE=1 && python -m uvicorn backend_api:app --host 0.0.0.0 --port 8000 --reload"
 timeout /t 5 /nobreak >nul
 
 echo [2/2] Starting Frontend React App...

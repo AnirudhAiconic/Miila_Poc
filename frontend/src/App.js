@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
+import AskFromImage from './components/AskFromImage';
 import './index.css';
 
 function App() {
@@ -69,6 +70,14 @@ function App() {
                 <Dashboard onLogout={handleLogout} /> : 
                 <Navigate to="/login" replace />
             } 
+          />
+          <Route 
+            path="/ask" 
+            element={
+              isAuthenticated ? 
+                <AskFromImage /> : 
+                <Navigate to="/login" replace />
+            }
           />
           <Route 
             path="/" 

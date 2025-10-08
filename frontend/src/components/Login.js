@@ -8,6 +8,8 @@ const Login = ({ onLogin }) => {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [logoError, setLogoError] = useState(false);
+  const [triedPng, setTriedPng] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -32,14 +34,29 @@ const Login = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center">
+    <div className="min-h-screen bg-white flex justify-center items-start pt-8">
       <div className="w-full max-w-sm">
         {/* Logo */}
-        <div className="text-center mb-12">
-          <div className="mb-8">
-            <div className="text-6xl font-bold text-gray-900 mb-2" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-              miila
-            </div>
+        <div className="text-center mb-6">
+          <div className="mb-2">
+            {!logoError ? (
+              <img
+                src={triedPng ? '/logo.png' : '/logo.svg'}
+                alt="Miila"
+                className="h-28 mx-auto mb-2"
+                onError={() => {
+                  if (!triedPng) {
+                    setTriedPng(true);
+                  } else {
+                    setLogoError(true);
+                  }
+                }}
+              />
+            ) : (
+              <div className="text-6xl font-bold text-gray-900 mb-2" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                miila
+              </div>
+            )}
           </div>
           <h2 className="text-lg font-normal text-gray-700">
             Sign in to Account
@@ -131,9 +148,9 @@ const Login = ({ onLogin }) => {
               </div>
 
               <div className="text-sm">
-                <a href="#" className="font-medium text-blue-600 hover:text-blue-500">
+                <button type="button" className="font-medium text-blue-600 hover:text-blue-500">
                   Forgot password?
-                </a>
+                </button>
               </div>
             </div>
 
