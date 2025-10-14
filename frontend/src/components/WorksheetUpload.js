@@ -99,13 +99,13 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
         {/* Tab Headers */}
         <div className="border-b border-gray-200 px-6 pt-4">
           <nav className="flex space-x-8">
-            <button className="pb-3 text-sm font-medium text-gray-900 border-b-2 border-blue-500">
+            <button className="pb-3 text-sm font-medium text-gray-900 border-b-2 border-gray-900">
               Original Worksheet
             </button>
-            <button className="pb-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+            <button className="pb-3 text-sm font-medium text-black hover:text-black">
               Scan with camera
             </button>
-            <button className="pb-3 px-4 py-1 text-sm font-medium bg-blue-600 text-white rounded">
+            <button className="pb-3 px-4 py-1 text-sm font-medium bg-black text-white rounded">
               Browse file
             </button>
             <button className="pb-3 text-sm font-medium text-gray-500 hover:text-gray-700">
@@ -117,13 +117,7 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
         {/* Upload Content Area */}
         <div className="p-8">
           <div
-            className={`border-2 border-dashed rounded-lg p-20 text-center transition-colors cursor-pointer ${
-              dragActive
-                ? 'border-blue-400 bg-blue-50'
-                : selectedFile
-                ? 'border-green-300 bg-green-50'
-                : 'border-gray-300 hover:border-gray-400'
-            }`}
+            className={`border-2 border-dashed rounded-lg p-20 text-center transition-colors cursor-pointer ${dragActive ? 'border-gray-500 bg-gray-50' : selectedFile ? 'border-green-300 bg-green-50' : 'border-gray-300 hover:border-gray-400'}`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
@@ -189,7 +183,7 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
           <button
             onClick={handleAnalyze}
             disabled={!selectedFile || !apiKey || loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed mt-6"
+            className="w-full bg-black hover:bg-gray-900 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed mt-6"
           >
             {loading ? (
               <div className="flex items-center justify-center">

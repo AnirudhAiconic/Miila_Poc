@@ -23,27 +23,24 @@ const Login = ({ onLogin }) => {
       return;
     }
 
-    // Simulate API call delay
-    setTimeout(() => {
-      const success = onLogin(email, password);
-      if (!success) {
-        setError('Invalid credentials');
-      }
-      setLoading(false);
-    }, 1000);
+    const success = await onLogin(email, password);
+    if (!success) {
+      setError('Invalid credentials');
+    }
+    setLoading(false);
   };
 
   return (
     <div className="min-h-screen bg-white flex justify-center items-start pt-8">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-lg">
         {/* Logo */}
-        <div className="text-center mb-6">
+        <div className="text-center mb-8">
           <div className="mb-2">
             {!logoError ? (
               <img
                 src={triedPng ? '/logo.png' : '/logo.svg'}
                 alt="Miila"
-                className="h-28 mx-auto mb-2"
+                className="h-40 mx-auto mb-2"
                 onError={() => {
                   if (!triedPng) {
                     setTriedPng(true);
@@ -53,7 +50,7 @@ const Login = ({ onLogin }) => {
                 }}
               />
             ) : (
-              <div className="text-6xl font-bold text-gray-900 mb-2" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+              <div className="text-7xl font-bold text-gray-900 mb-2" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
                 miila
               </div>
             )}
@@ -64,7 +61,7 @@ const Login = ({ onLogin }) => {
         </div>
 
         {/* Login Form */}
-        <div className="bg-white shadow-lg rounded-lg p-8 border border-gray-200">
+        <div className="bg-white shadow-lg rounded-lg p-10 border border-gray-200">
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">

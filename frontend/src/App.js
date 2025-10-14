@@ -20,21 +20,24 @@ function App() {
     setLoading(false);
   }, []);
 
-  const handleLogin = (email, password) => {
-    // Simple authentication - in production, this would be a real API call
-    if (email && password) {
-      const userData = {
-        email: email,
-        name: email.split('@')[0],
-        loginTime: new Date().toISOString()
-      };
-      
-      localStorage.setItem('miila_token', 'demo_token_' + Date.now());
-      localStorage.setItem('miila_user', JSON.stringify(userData));
-      setIsAuthenticated(true);
-      return true;
+  const handleLogin = async (email, password) => {
+    try {
+      const form = new FormData();
+      form.append('email', email);
+      form.append('password', password);
+      const res = await fetch('http://localhost:8000/auth/login', { method: 'POST', body: form });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data && data.success) {
+        localStorage.setItem('miila_token', data.token);
+        localStorage.setItem('miila_user', JSON.stringify(data.user));
+        setIsAuthenticated(true);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
     }
-    return false;
   };
 
   const handleLogout = () => {

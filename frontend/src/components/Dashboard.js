@@ -217,60 +217,56 @@ const Dashboard = ({ onLogout }) => {
       <div className="w-14 bg-transparent flex flex-col items-center mt-16 ml-4">
         <div className="w-full h-2" />
         <nav className="flex flex-col space-y-3 flex-1 py-4">
-          <button
+          <div className="relative">
+            {activeTab === 'upload' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            <button
             onClick={() => setActiveTab('upload')}
-            className={`p-2 rounded-lg transition-colors ${
-              activeTab === 'upload'
-                ? 'bg-blue-100 text-blue-600 border-l-4 border-blue-600'
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
-            }`}
+            className={`p-2 rounded-lg transition-colors ${activeTab === 'upload' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             title="Upload Worksheet"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
             </svg>
-          </button>
+            </button>
+          </div>
 
-          <button
+          <div className="relative">
+            {activeTab === 'tutor' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            <button
             onClick={() => setActiveTab('tutor')}
-            className={`p-2 rounded-lg transition-colors ${
-              activeTab === 'tutor'
-                ? 'bg-blue-100 text-blue-600 border-l-4 border-blue-600'
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
-            }`}
+            className={`p-2 rounded-lg transition-colors ${activeTab === 'tutor' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             title="AI Tutoring"
           >
             <HelpCircle className="h-4 w-4" />
-          </button>
+            </button>
+          </div>
           
-          <button
+          <div className="relative">
+            {activeTab === 'apikey' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            <button
             onClick={() => setActiveTab('apikey')}
-            className={`p-2 rounded-lg transition-colors ${
-              activeTab === 'apikey'
-                ? 'bg-blue-100 text-blue-600 border-l-4 border-blue-600'
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
-            }`}
+            className={`p-2 rounded-lg transition-colors ${activeTab === 'apikey' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             title="API Key"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
             </svg>
-          </button>
+            </button>
+          </div>
           
-          <button
+          <div className="relative">
+            {activeTab === 'results' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            <button
             onClick={() => setActiveTab('results')}
-            className={`p-2 rounded-lg transition-colors ${
-              activeTab === 'results'
-                ? 'bg-blue-100 text-blue-600 border-l-4 border-blue-600'
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
-            }`}
+            className={`p-2 rounded-lg transition-colors ${activeTab === 'results' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             disabled={!results}
             title="Results"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
             </svg>
-          </button>
+            </button>
+          </div>
         </nav>
         <div className="flex flex-col space-y-3 mt-auto">
           <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors">
@@ -293,15 +289,15 @@ const Dashboard = ({ onLogout }) => {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="mt-3 mr-4 -ml-20">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-2 flex items-center justify-between">
-            {/* Logo left (small) */}
-            <div className="text-gray-900 pl-2">
+        <header className="mt-1 mr-2 -ml-16">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 px-3 py-1 flex items-center justify-between">
+            {/* Logo left (bigger) */}
+            <div className="text-gray-900 pl-2 flex items-center">
               {!logoError ? (
                 <img
                   src={triedPng ? '/logo.png' : '/logo.svg'}
                   alt="Miila"
-                  className="h-14"
+                  className="h-16"
                   onError={() => {
                     if (!triedPng) {
                       setTriedPng(true);
@@ -311,19 +307,19 @@ const Dashboard = ({ onLogout }) => {
                   }}
                 />
               ) : (
-                <div className="text-xl font-bold" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>miila</div>
+                <div className="text-2xl font-bold" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>miila</div>
               )}
             </div>
 
             {/* Center pill search */}
-            <div className="flex-1 max-w-xl mx-6">
+            <div className="flex-1 max-w-lg mx-4">
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Search className="h-5 w-5 text-gray-400" />
                 </div>
                 <input
                   type="text"
-                  className="w-full pl-10 pr-12 py-1.5 rounded-full border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-10 pr-12 py-1 rounded-full border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="Search..."
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
@@ -398,7 +394,7 @@ const Dashboard = ({ onLogout }) => {
                         }
                       }}
                       disabled={!apiKey}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="bg-black hover:bg-gray-900 text-white font-medium py-2 px-6 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Accept
                     </button>

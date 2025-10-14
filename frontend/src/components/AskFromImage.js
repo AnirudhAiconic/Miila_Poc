@@ -9,6 +9,9 @@ const AskFromImage = () => {
   const [extracted, setExtracted] = useState('');
   const [answer, setAnswer] = useState('');
   const [error, setError] = useState('');
+  const [conversationId, setConversationId] = useState('');
+  const [stepIndex, setStepIndex] = useState(0);
+  const [messages, setMessages] = useState([]);
   const inputRef = useRef(null);
 
   const onFile = (file) => {
@@ -25,20 +28,36 @@ const AskFromImage = () => {
   };
 
   const handleAsk = async () => {
-    if (!selectedFile) {
+    if (!selectedFile && stepIndex === 0) {
       setError('Please choose an image to upload.');
       return;
     }
     setLoading(true);
     setError('');
     try {
+      // Conversational call
       const form = new FormData();
       if (selectedFile) form.append('file', selectedFile);
-      const res = await axios.post('http://localhost:8000/ask', form, {
+      form.append('step_index', String(stepIndex));
+      if (conversationId) form.append('conversation_id', conversationId);
+      const res = await axios.post('http://localhost:8000/tutor/next', form, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setExtracted(res.data.extracted_text || '');
-      setAnswer(res.data.answer || '');
+
+      const cid = res.data.conversation_id || conversationId;
+      setConversationId(cid);
+
+      const recognized = res.data.recognized_text || '';
+      const tutor = res.data.tutor_message || '';
+      const done = !!res.data.done;
+      const finalAnswer = res.data.final_answer || '';
+
+      if (recognized) setMessages(m => [...m, { role: 'student', text: recognized }]);
+      if (tutor && !done) setMessages(m => [...m, { role: 'tutor', text: tutor }]);
+
+      setExtracted(recognized);
+      setAnswer(done ? finalAnswer : '');
+      if (!done) setStepIndex(s => s + 1);
     } catch (e) {
       setError(e.response?.data?.error || 'Request failed');
     } finally {
@@ -60,8 +79,8 @@ const AskFromImage = () => {
     <div className="min-h-screen bg-gray-50 flex items-start justify-center pt-8">
       <div className="w-full max-w-3xl">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Ask from Image</h1>
-          <p className="text-gray-600 mb-4">Upload a photo of your handwritten question. We’ll read it and fetch an answer from the knowledge base.</p>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">AI Tutoring</h1>
+          <p className="text-gray-600 mb-4">Upload your sheet for this step. The tutor will give a hint for the next one.</p>
 
           <div className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-gray-400" onClick={() => inputRef.current?.click()}>
             {preview ? (
@@ -78,7 +97,7 @@ const AskFromImage = () => {
             <button
               type="button"
               onClick={() => inputRef.current?.setAttribute('capture', 'environment') || inputRef.current?.click()}
-              className="text-sm text-blue-600 hover:text-blue-700"
+              className="text-sm text-black hover:text-black"
             >
               Or scan with camera
             </button>
@@ -90,32 +109,42 @@ const AskFromImage = () => {
           )}
 
           <div className="mt-4">
-            <button onClick={handleAsk} disabled={loading || !selectedFile} className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded disabled:opacity-50">
+            <button onClick={handleAsk} disabled={loading || (!selectedFile && stepIndex===0)} className="bg-black hover:bg-gray-900 text-white font-medium py-2 px-4 rounded disabled:opacity-50">
               {loading ? (<span className="inline-flex items-center"><Loader className="h-4 w-4 mr-2 animate-spin"/>Processing...</span>) : 'Process Image'}
             </button>
           </div>
         </div>
 
-        {(extracted || answer) && (
+        {(messages.length > 0 || answer) && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            {extracted && (
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Recognized Question</h2>
-                <p className="text-gray-700 mt-1 whitespace-pre-wrap">{extracted}</p>
-              </div>
-            )}
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">Conversation</h2>
+            <div className="space-y-3">
+              {messages.map((m, i) => (
+                <div key={i} className={m.role === 'tutor' ? 'bg-blue-50 p-3 rounded' : 'bg-gray-50 p-3 rounded'}>
+                  <div className="text-xs text-gray-500 mb-1">{m.role === 'tutor' ? 'Tutor' : 'Student'}</div>
+                  <div className="text-gray-800 whitespace-pre-wrap">{m.text}</div>
+                </div>
+              ))}
+            </div>
 
-            <div className="flex items-start justify-between">
-              <div className="pr-4">
-                <h2 className="text-lg font-semibold text-gray-900">Answer</h2>
-                <div className="prose prose-sm max-w-none text-gray-800">
-                  <p className="whitespace-pre-wrap">{answer || '—'}</p>
+            {answer && (
+              <div className="mt-6">
+                <div className="flex items-start justify-between">
+                  <div className="pr-4">
+                    <h2 className="text-lg font-semibold text-gray-900">Final Answer</h2>
+                    <div className="prose prose-sm max-w-none text-gray-800">
+                      <p className="whitespace-pre-wrap">{answer}</p>
+                    </div>
+                  </div>
+                  <button onClick={speak} className="p-2 rounded bg-gray-100 hover:bg-gray-200" title="Play answer">
+                    <Volume2 className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="mt-4">
+                  <button onClick={() => { setConversationId(''); setStepIndex(0); setMessages([]); setExtracted(''); setAnswer(''); setSelectedFile(null); setPreview(null); }} className="text-sm text-blue-600 hover:text-blue-700">Restart</button>
                 </div>
               </div>
-              <button onClick={speak} className="p-2 rounded bg-gray-100 hover:bg-gray-200" title="Play answer">
-                <Volume2 className="h-5 w-5" />
-              </button>
-            </div>
+            )}
           </div>
         )}
       </div>

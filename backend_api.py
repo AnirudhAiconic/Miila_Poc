@@ -24,6 +24,7 @@ import json
 import math
 from functools import lru_cache
 import threading
+import uuid
 
 app = FastAPI(title="Miila Math Checker API", version="1.0.0")
 
@@ -341,6 +342,29 @@ def _get_poc_variants_tuple():
     data = _load_rag_store()
     return tuple(v for v in data.get("poc_variants", []))
 
+# ---------- Simple auth (single credential) ----------
+VALID_EMAIL = os.getenv("MIILA_ADMIN_EMAIL", "admin@miila.ai")
+VALID_PASSWORD = os.getenv("MIILA_ADMIN_PASSWORD", "Miila@123")
+
+@app.post("/auth/login")
+async def auth_login(email: str = Form(...), password: str = Form(...)):
+    try:
+        if email == VALID_EMAIL and password == VALID_PASSWORD:
+            token = f"demo_{uuid.uuid4()}"
+            return {
+                "success": True,
+                "token": token,
+                "user": {
+                    "email": email,
+                    "name": email.split('@')[0],
+                }
+            }
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
 @app.post("/ask")
 async def ask(file: UploadFile = File(...)):
     """
@@ -395,6 +419,77 @@ async def ask(file: UploadFile = File(...)):
                 os.unlink(temp_path)
         except Exception:
             pass
+
+# -------------------------------
+# Conversational tutor (POC scripted)
+# -------------------------------
+
+SCRIPTED_STEPS = [
+    {
+        "recognized": "What is life like on a spaceship?",
+        "tutor": "Great question! Think daily life. Start by naming two things astronauts do every day.",
+    },
+    {
+        "recognized": "They eat and exercise.",
+        "tutor": "Good! Why is exercise so important in space? Write your reason in one short line.",
+    },
+    {
+        "recognized": "To keep muscles and bones strong.",
+        "tutor": "Right. Now, how do they get power and clean air/water? One short line.",
+    },
+    {
+        "recognized": "Solar panels for power, recycling for air and water.",
+        "tutor": "Nice. Last: name one feeling and one teamwork skill that help crews.",
+    },
+    {
+        "recognized": "They feel lonely sometimes; teamwork and calm talking help.",
+        "final": (
+            "Life on a spaceship is busy and careful. Astronauts follow a routine: they eat special meals, "
+            "exercise every day to keep muscles and bones strong, and do science and maintenance jobs. "
+            "Power comes from solar panels, and systems recycle air and water to save resources. "
+            "Teams practice calm, clear communication and help each other, which matters when people miss family or feel lonely."
+        ),
+    },
+]
+
+@app.post("/tutor/next")
+async def tutor_next(
+    step_index: int = Form(...),
+    conversation_id: str | None = Form(None),
+    file: UploadFile | None = File(None),
+):
+    """POC conversational step. Accepts an optional image, returns scripted hint.
+    This endpoint does not persist state; the client holds conversation_id.
+    """
+    try:
+        # swallow uploaded file; not used in POC
+        if file is not None:
+            try:
+                _ = await file.read()
+            except Exception:
+                pass
+
+        if conversation_id is None or conversation_id.strip() == "":
+            conversation_id = str(uuid.uuid4())
+
+        # clamp index
+        idx = max(0, min(len(SCRIPTED_STEPS) - 1, int(step_index)))
+        node = SCRIPTED_STEPS[idx]
+        done = idx >= len(SCRIPTED_STEPS) - 1
+
+        payload = {
+            "conversation_id": conversation_id,
+            "step_index": idx,
+            "recognized_text": node.get("recognized", ""),
+            "tutor_message": node.get("tutor", "") if not done else "Great work! Here's a summary.",
+            "done": done,
+        }
+        if done:
+            payload["final_answer"] = node.get("final", "")
+
+        return JSONResponse(content=payload)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 @app.post("/validate-api-key")
 async def validate_api_key(api_key: str = Form(...)):

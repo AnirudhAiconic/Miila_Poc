@@ -13,6 +13,19 @@ import {
 
 const ResultsDisplay = ({ results }) => {
   const [selectedProblem, setSelectedProblem] = useState(null);
+  
+  const handleExport = () => {
+    try {
+      if (results && results.annotated_image) {
+        const link = document.createElement('a');
+        link.href = `data:image/png;base64,${results.annotated_image}`;
+        link.download = 'miila_report.png';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch {}
+  };
 
   if (!results || !results.problems) {
     return (
@@ -96,7 +109,7 @@ const ResultsDisplay = ({ results }) => {
         </div>
         
         <div className="flex space-x-3">
-          <button className="btn-secondary flex items-center">
+          <button className="btn-secondary flex items-center" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" />
             Export
           </button>
