@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import base64
@@ -27,6 +27,61 @@ import threading
 import uuid
 
 app = FastAPI(title="Miila Math Checker API", version="1.0.0")
+# -------------------------------
+# Simple WebSocket signaling for WebRTC (POC)
+# -------------------------------
+_room_lock = threading.Lock()
+_room_to_clients: dict[str, set] = {}
+
+@app.websocket("/ws/signal")
+async def ws_signal(websocket: WebSocket, room: str = Query(..., min_length=1), role: str | None = Query(None)):
+    # Accept connection
+    await websocket.accept()
+    try:
+        with _room_lock:
+            clients = _room_to_clients.get(room)
+            if clients is None:
+                clients = set()
+                _room_to_clients[room] = clients
+            clients.add(websocket)
+        # Relay any incoming text messages to other peers in the same room
+        while True:
+            msg = await websocket.receive_text()
+            # Broadcast to all other clients in the room
+            with _room_lock:
+                targets = list(_room_to_clients.get(room, set()))
+            for ws in targets:
+                if ws is websocket:
+                    continue
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    # Drop broken connections
+                    try:
+                        with _room_lock:
+                            _room_to_clients.get(room, set()).discard(ws)
+                    except Exception:
+                        pass
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        # swallow other errors to keep server healthy
+        pass
+    finally:
+        try:
+            with _room_lock:
+                group = _room_to_clients.get(room)
+                if group is not None:
+                    group.discard(websocket)
+                    if not group:
+                        _room_to_clients.pop(room, None)
+        except Exception:
+            pass
+
+# Fixed worksheet configuration (always process the same image if enabled)
+FIXED_WORKSHEET_DIR = os.path.join(os.path.dirname(__file__), "uploads", "fixed")
+FIXED_WORKSHEET_FILE = os.getenv("MIILA_FIXED_WORKSHEET_FILE")  # filename or absolute path
+ALWAYS_USE_FIXED = os.getenv("MIILA_ALWAYS_USE_FIXED", "0").lower() in ("1", "true", "yes")
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -62,17 +117,24 @@ async def analyze_worksheet(
     Analyze a math worksheet image and return results with feedback
     """
     try:
-        # Validate file type
+        # Validate file type (frontend may still send a dummy image)
         if not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="File must be an image")
-        
-        # Read the uploaded file
-        contents = await file.read()
-        
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
-            tmp_file.write(contents)
-            temp_path = tmp_file.name
+
+        # Always use the most recently pre-uploaded worksheet from uploads/fixed
+        upload_dir = os.path.join(os.path.dirname(__file__), 'uploads', 'fixed')
+        os.makedirs(upload_dir, exist_ok=True)
+        try:
+            candidates = [
+                os.path.join(upload_dir, name)
+                for name in os.listdir(upload_dir)
+                if name.lower().endswith((".png", ".jpg", ".jpeg"))
+            ]
+        except Exception:
+            candidates = []
+        if not candidates:
+            raise HTTPException(status_code=400, detail=f"No pre-uploaded worksheet found in {upload_dir}. Place a PNG/JPG there.")
+        input_path = max(candidates, key=lambda p: os.path.getmtime(p))
         
         try:
             # Normalize API key (handle 'OPENAI_API_KEY=sk-...' or quotes)
@@ -88,8 +150,8 @@ async def analyze_worksheet(
             # Initialize math checker with API key
             checker = SimpleMathChecker(openai_api_key=normalized_key)
             
-            # Analyze the worksheet
-            result_path, report, summary, analysis = checker.check_worksheet(temp_path)
+            # Analyze the worksheet (always use pre-uploaded image)
+            result_path, report, summary, analysis = checker.check_worksheet(input_path)
             
             # Read the annotated image
             annotated_image_b64 = None
@@ -97,9 +159,26 @@ async def analyze_worksheet(
                 with open(result_path, 'rb') as img_file:
                     img_data = img_file.read()
                     annotated_image_b64 = base64.b64encode(img_data).decode('utf-8')
-                
-                # Clean up the result file
-                os.unlink(result_path)
+
+                # Clean up the result file immediately (do not persist reports)
+                try:
+                    os.unlink(result_path)
+                except Exception:
+                    pass
+
+                # Extra cleanup: remove ANY '*_checked*' artifacts in uploads/fixed
+                try:
+                    fixed_dir = os.path.join(os.path.dirname(__file__), 'uploads', 'fixed')
+                    if os.path.isdir(fixed_dir):
+                        for fname in os.listdir(fixed_dir):
+                            fn_lower = fname.lower()
+                            if ('_checked' in fn_lower) and fn_lower.endswith(('.png', '.jpg', '.jpeg')):
+                                try:
+                                    os.unlink(os.path.join(fixed_dir, fname))
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
             
             # Parse the report to extract problems
             problems = analysis.get('problems', []) if isinstance(analysis, dict) else []
@@ -134,9 +213,7 @@ async def analyze_worksheet(
             raise HTTPException(status_code=500, detail=f"Analysis failed: {err}")
         
         finally:
-            # Clean up temporary file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+            pass
                 
     except Exception as e:
         # Avoid emoji in console

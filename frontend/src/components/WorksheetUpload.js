@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Camera, FileText, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import axios from 'axios';
 
@@ -9,6 +9,114 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef(null);
+  
+  // Camera state
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  // Remote WebRTC subscribe (teacher side for math)
+  const remoteVideoRef = useRef(null);
+  const subPcRef = useRef(null);
+  const subWsRef = useRef(null);
+  const [room, setRoom] = useState('default');
+  const remoteSectionRef = useRef(null);
+  const scrollToRemote = () => {
+    try { remoteSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+  };
+
+  const refreshDevices = async () => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      setVideoDevices(cams);
+      if (!selectedDeviceId && cams[0]) setSelectedDeviceId(cams[0].deviceId);
+    } catch {}
+  };
+
+  const startCamera = async (deviceId) => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) return;
+      // Stop previous stream
+      stopCamera();
+      const constraints = { video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }, audio: false };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        try { await videoRef.current.play(); } catch {}
+      }
+    } catch (e) {
+      console.error('Camera start error:', e);
+    }
+  };
+
+  const stopCamera = () => {
+    try {
+      const s = streamRef.current;
+      if (s) {
+        s.getTracks().forEach(t => t.stop());
+      }
+      streamRef.current = null;
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    } catch {}
+  };
+
+  const openCameraModal = async () => {
+    setCameraOpen(true);
+    await refreshDevices();
+    await startCamera(selectedDeviceId);
+  };
+
+  const closeCameraModal = () => {
+    stopCamera();
+    setCameraOpen(false);
+  };
+
+  const handleDeviceChange = async (e) => {
+    const id = e.target.value;
+    setSelectedDeviceId(id);
+    await startCamera(id);
+  };
+
+  const captureFromCamera = () => {
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas) return;
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) return;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, w, h);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const fileName = `camera_capture_${Date.now()}.png`;
+        const file = new File([blob], fileName, { type: 'image/png' });
+        setSelectedFile(file);
+        const reader = new FileReader();
+        reader.onload = (e) => setPreview(e.target.result);
+        reader.readAsDataURL(file);
+        closeCameraModal();
+      }, 'image/png');
+    } catch (e) {
+      console.error('Capture error:', e);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      // Cleanup on unmount
+      stopCamera();
+    };
+  }, []);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -86,6 +194,91 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
     }
   };
 
+  // --- WebRTC subscribe helpers (math side) ---
+  const startSubscribe = async () => {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
+      subPcRef.current = pc;
+      let remoteStream = new MediaStream();
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
+      pc.ontrack = (ev) => {
+        if (ev.streams && ev.streams[0]) {
+          ev.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
+        } else if (ev.track) {
+          remoteStream.addTrack(ev.track);
+        }
+      };
+      pc.ondatachannel = (e) => {
+        const dc = e.channel;
+        if (dc.label !== 'signals') return;
+        dc.onmessage = () => {
+          // When student says ready, auto snap
+          captureFromRemoteVideo();
+        };
+      };
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const host = window.location.hostname;
+      const ws = new WebSocket(`${proto}://${host}:8000/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
+      subWsRef.current = ws;
+      const outQueue = [];
+      ws.onmessage = async (ev) => {
+        const data = JSON.parse(ev.data || '{}');
+        if (data.type === 'offer') {
+          await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+        } else if (data.type === 'ice') {
+          try { await pc.addIceCandidate(data.candidate); } catch {}
+        }
+      };
+      pc.onicecandidate = (e) => {
+        if (!e.candidate) return;
+        const msg = { type: 'ice', candidate: e.candidate };
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(msg));
+        } else {
+          outQueue.push(msg);
+        }
+      };
+      ws.onopen = () => {
+        try {
+          ws.send(JSON.stringify({ type: 'need-offer' }));
+          outQueue.forEach(m => ws.send(JSON.stringify(m)));
+        } catch {}
+      };
+    } catch (e) {
+      console.error('Subscribe error:', e);
+    }
+  };
+
+  const stopSubscribe = () => {
+    try { subWsRef.current?.close(); } catch {}
+    try { subPcRef.current?.close(); } catch {}
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+  };
+
+  const captureFromRemoteVideo = () => {
+    try {
+      const v = remoteVideoRef.current;
+      if (!v) return;
+      const c = document.createElement('canvas');
+      const w = v.videoWidth, h = v.videoHeight;
+      if (!w || !h) return;
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, w, h);
+      c.toBlob((blob) => {
+        if (!blob) return;
+        const f = new File([blob], `remote_capture_${Date.now()}.png`, { type: 'image/png' });
+        setSelectedFile(f);
+        const r = new FileReader();
+        r.onload = (e) => setPreview(e.target.result);
+        r.readAsDataURL(f);
+      }, 'image/png');
+    } catch {}
+  };
+
   const handleCameraCapture = () => {
     // This would typically open camera interface
     // For now, just trigger file input
@@ -102,8 +295,8 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
             <button className="pb-3 text-sm font-medium text-gray-900 border-b-2 border-gray-900">
               Original Worksheet
             </button>
-            <button className="pb-3 text-sm font-medium text-black hover:text-black">
-              Scan with camera
+            <button className="pb-3 text-sm font-medium text-black hover:text-black" onClick={scrollToRemote}>
+              Connect remote stream
             </button>
             <button className="pb-3 px-4 py-1 text-sm font-medium bg-black text-white rounded">
               Browse file
@@ -201,6 +394,21 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
             </p>
           )}
         </div>
+
+        {/* Remote stream controls and preview */}
+        <div ref={remoteSectionRef} className="px-8 pb-8">
+          <div className="text-sm mb-2">
+            <input value={room} onChange={e => setRoom(e.target.value)} className="text-sm border border-gray-300 rounded px-2 py-1 mr-2" placeholder="room" />
+            <button type="button" onClick={() => startSubscribe()} className="text-sm border border-gray-300 rounded px-2 py-1 mr-2">Connect remote stream</button>
+            <button type="button" onClick={() => stopSubscribe()} className="text-sm border border-gray-300 rounded px-2 py-1">Disconnect</button>
+          </div>
+          <div className="aspect-video bg-black rounded overflow-hidden">
+            <video ref={remoteVideoRef} className="w-full h-full object-contain" autoPlay playsInline muted />
+          </div>
+          <div className="mt-3">
+            <button onClick={() => captureFromRemoteVideo()} className="bg-black hover:bg-gray-900 text-white font-medium py-2 px-4 rounded">Snap from stream</button>
+          </div>
+        </div>
       </div>
 
       {/* Results Sidebar */}
@@ -238,6 +446,34 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
           </div>
         </div>
       </div>
+      
+      {/* Camera Modal */}
+      {cameraOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-lg font-semibold text-gray-900">Scan with camera</h4>
+              <button onClick={closeCameraModal} className="text-gray-600 hover:text-gray-800">Close</button>
+            </div>
+            <div className="mb-3">
+              <label className="block text-sm text-gray-700 mb-1">Camera device</label>
+              <select value={selectedDeviceId} onChange={handleDeviceChange} className="w-full border border-gray-300 rounded px-2 py-1">
+                {videoDevices.map(d => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(-4)}`}</option>
+                ))}
+              </select>
+            </div>
+            <div className="aspect-video bg-black rounded overflow-hidden">
+              <video ref={videoRef} className="w-full h-full object-contain" autoPlay playsInline muted />
+            </div>
+            <div className="flex justify-end space-x-3 mt-4">
+              <button onClick={captureFromCamera} className="bg-black hover:bg-gray-900 text-white font-medium py-2 px-4 rounded">Capture</button>
+              <button onClick={closeCameraModal} className="border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium py-2 px-4 rounded">Cancel</button>
+            </div>
+            <canvas ref={canvasRef} className="hidden" />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

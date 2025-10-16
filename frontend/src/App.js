@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import AskFromImage from './components/AskFromImage';
+import StudentPublisher from './components/StudentPublisher';
 import './index.css';
 
 function App() {
@@ -79,6 +80,14 @@ function App() {
             element={
               isAuthenticated ? 
                 <AskFromImage /> : 
+                <Navigate to="/login" replace />
+            }
+          />
+          <Route 
+            path="/student-publish" 
+            element={
+              isAuthenticated ? 
+                <StudentPublisher /> : 
                 <Navigate to="/login" replace />
             }
           />
