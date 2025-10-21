@@ -2,6 +2,15 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Camera, FileText, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import axios from 'axios';
 
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  {
+    urls: ['turns:turn.miila.eu:5349', 'turn:turn.miila.eu:3478'],
+    username: 'miila',
+    credential: 'VeryStrongTurnPass123'
+  }
+];
+
 const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -17,6 +26,7 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+
   // Remote WebRTC subscribe (teacher side for math)
   const remoteVideoRef = useRef(null);
   const subPcRef = useRef(null);
@@ -176,11 +186,9 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
       formData.append('file', selectedFile);
       formData.append('api_key', apiKey);
 
-      // Call your Python backend API
-      const response = await axios.post('http://localhost:8000/analyze-worksheet', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+      // Same-origin backend behind Nginx
+      const response = await axios.post(`${window.location.origin}/analyze-worksheet`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
 
       if (response.data) {
@@ -197,7 +205,7 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
   // --- WebRTC subscribe helpers (math side) ---
   const startSubscribe = async () => {
     try {
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       subPcRef.current = pc;
       let remoteStream = new MediaStream();
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
@@ -217,8 +225,7 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
         };
       };
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const host = window.location.hostname;
-      const ws = new WebSocket(`${proto}://${host}:8000/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
+      const ws = new WebSocket(`${proto}://${window.location.host}/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
       subWsRef.current = ws;
       const outQueue = [];
       ws.onmessage = async (ev) => {

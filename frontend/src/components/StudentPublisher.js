@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-const STUN = [{ urls: ['stun:stun.l.google.com:19302'] }];
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  {
+    urls: ['turns:turn.miila.eu:5349', 'turn:turn.miila.eu:3478'],
+    username: 'miila',
+    credential: 'VeryStrongTurnPass123'
+  }
+];
 
 const StudentPublisher = () => {
   const [room, setRoom] = useState('default');
@@ -25,9 +32,7 @@ const StudentPublisher = () => {
 
   const wsBase = () => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const host = window.location.hostname;
-    const port = 8000; // backend
-    return `${proto}://${host}:${port}`;
+    return `${proto}://${window.location.host}`;
   };
 
   const refreshDevices = async () => {
@@ -47,7 +52,7 @@ const StudentPublisher = () => {
   };
 
   const start = async () => {
-    const pc = new RTCPeerConnection({ iceServers: STUN });
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
 
     // Local media
@@ -55,7 +60,6 @@ const StudentPublisher = () => {
     localStreamRef.current = stream;
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
     if (videoRef.current) videoRef.current.srcObject = stream;
-    // Now that we have permission, load device labels
     await refreshDevices();
 
     // DataChannel for signals (ready)
@@ -104,12 +108,9 @@ const StudentPublisher = () => {
       }
     };
 
-    // Negotiation triggers
     pc.onnegotiationneeded = async () => { await sendOffer(); };
     ws.onopen = () => {
-      // Send initial offer after WS is open
       sendOffer();
-      // Flush queued ICE
       try {
         outQueueRef.current.forEach((m) => ws.send(JSON.stringify(m)));
       } catch {}
@@ -177,7 +178,6 @@ const StudentPublisher = () => {
   const handleDeviceChange = async (e) => {
     const id = e.target.value;
     setSelectedDeviceId(id);
-    // If connected, switch camera live by replacing track
     if (connected && pcRef.current) {
       try {
         const newStream = await getStreamForDevice(id);
@@ -187,7 +187,6 @@ const StudentPublisher = () => {
           await sender.replaceTrack(newTrack);
         }
         if (videoRef.current) videoRef.current.srcObject = newStream;
-        // stop old stream
         try { localStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
         localStreamRef.current = newStream;
       } catch {}
@@ -228,5 +227,3 @@ const StudentPublisher = () => {
 };
 
 export default StudentPublisher;
-
-

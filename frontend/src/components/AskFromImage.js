@@ -2,6 +2,15 @@ import React, { useRef, useState, useEffect } from 'react';
 import axios from 'axios';
 import { Upload, Volume2, Loader } from 'lucide-react';
 
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  {
+    urls: ['turns:turn.miila.eu:5349', 'turn:turn.miila.eu:3478'],
+    username: 'miila',
+    credential: 'VeryStrongTurnPass123'
+  }
+];
+
 const AskFromImage = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -192,12 +201,13 @@ const AskFromImage = () => {
     setLoading(true);
     setError('');
     try {
-      // Conversational call
       const form = new FormData();
       if (selectedFile) form.append('file', selectedFile);
       form.append('step_index', String(stepIndex));
       if (conversationId) form.append('conversation_id', conversationId);
-      const res = await axios.post('http://localhost:8000/tutor/next', form, {
+
+      const apiBase = window.location.origin; // same-origin behind Nginx
+      const res = await axios.post(`${apiBase}/tutor/next`, form, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
@@ -216,7 +226,6 @@ const AskFromImage = () => {
       setAnswer(done ? finalAnswer : '');
       if (!done) {
         setStepIndex(s => s + 1);
-        // Clear captured/uploaded image to allow a fresh scan each turn
         setSelectedFile(null);
         setPreview(null);
       }
@@ -240,7 +249,7 @@ const AskFromImage = () => {
   // --- WebRTC subscribe (teacher side) ---
   const startSubscribe = async () => {
     try {
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       subPcRef.current = pc;
       let remoteStream = new MediaStream();
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
@@ -258,15 +267,13 @@ const AskFromImage = () => {
           try {
             const data = JSON.parse(msg.data || '{}');
             if (data.type === 'ready') {
-              // auto capture from remote video element
               captureFromRemoteVideo();
             }
           } catch {}
         };
       };
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const host = window.location.hostname;
-      const ws = new WebSocket(`${proto}://${host}:8000/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
+      const ws = new WebSocket(`${proto}://${window.location.host}/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
       subWsRef.current = ws;
       ws.onmessage = async (ev) => {
         const data = JSON.parse(ev.data || '{}');
@@ -278,11 +285,9 @@ const AskFromImage = () => {
         } else if (data.type === 'ice') {
           try { await pc.addIceCandidate(data.candidate); } catch {}
         } else if (data.type === 'hello') {
-          // Let the publisher know we need an offer if we connected first
           ws.send(JSON.stringify({ type: 'need-offer' }));
         }
       };
-      // On connect, ask the publisher to send us a fresh offer if needed
       ws.onopen = () => {
         try { ws.send(JSON.stringify({ type: 'need-offer' })); } catch {}
       };
@@ -358,7 +363,6 @@ const AskFromImage = () => {
             <button type="button" onClick={stopSubscribe} className="text-sm border border-gray-300 rounded px-2 py-1">Disconnect</button>
           </div>
 
-
           {error && (
             <div className="bg-red-50 border border-red-200 rounded mt-4 p-3 text-sm text-red-700">{error}</div>
           )}
@@ -413,7 +417,7 @@ const AskFromImage = () => {
             <button onClick={captureFromRemoteVideo} className="bg-black hover:bg-gray-900 text-white font-medium py-2 px-4 rounded">Snap from stream</button>
           </div>
         </div>
-        
+
         {/* Camera Modal */}
         {cameraOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -455,5 +459,3 @@ const AskFromImage = () => {
 };
 
 export default AskFromImage;
-
-

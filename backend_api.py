@@ -6,7 +6,10 @@ import io
 import os
 from PIL import Image
 import cv2
-import torch
+try:
+    import torch
+except Exception:
+    torch = None
 try:
     import easyocr
 except Exception:
@@ -289,7 +292,7 @@ def _get_easyocr_reader():
     if easyocr is None:
         return None
     try:
-        return easyocr.Reader(['en'], gpu=torch.cuda.is_available())
+        return easyocr.Reader(['en'], gpu=(hasattr(torch,"cuda") and torch.cuda.is_available()))
     except Exception:
         return None
 
