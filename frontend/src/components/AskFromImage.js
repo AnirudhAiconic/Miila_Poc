@@ -22,13 +22,14 @@ const AskFromImage = () => {
   const [stepIndex, setStepIndex] = useState(0);
   const [messages, setMessages] = useState([]);
   const inputRef = useRef(null);
-  // WebRTC subscriber
+
+  // WebRTC subscriber (teacher)
   const remoteVideoRef = useRef(null);
   const subPcRef = useRef(null);
   const subWsRef = useRef(null);
   const [room, setRoom] = useState('default');
 
-  // Camera state
+  // Local camera modal (optional capture)
   const [cameraOpen, setCameraOpen] = useState(false);
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
@@ -113,8 +114,7 @@ const AskFromImage = () => {
       ctx.drawImage(video, 0, 0, w, h);
       canvas.toBlob((blob) => {
         if (!blob) return;
-        const fileName = `tutor_capture_${Date.now()}.png`;
-        const file = new File([blob], fileName, { type: 'image/png' });
+        const file = new File([blob], `tutor_capture_${Date.now()}.png`, { type: 'image/png' });
         setSelectedFile(file);
         const reader = new FileReader();
         reader.onload = (e) => setPreview(e.target.result);
@@ -206,7 +206,7 @@ const AskFromImage = () => {
       form.append('step_index', String(stepIndex));
       if (conversationId) form.append('conversation_id', conversationId);
 
-      const apiBase = window.location.origin; // same-origin behind Nginx
+      const apiBase = window.location.origin;
       const res = await axios.post(`${apiBase}/tutor/next`, form, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
@@ -253,6 +253,7 @@ const AskFromImage = () => {
       subPcRef.current = pc;
       let remoteStream = new MediaStream();
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
+
       pc.ontrack = (ev) => {
         if (ev.streams && ev.streams[0]) {
           ev.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
@@ -260,21 +261,22 @@ const AskFromImage = () => {
           remoteStream.addTrack(ev.track);
         }
       };
+
       pc.ondatachannel = (e) => {
         const dc = e.channel;
         if (dc.label !== 'signals') return;
         dc.onmessage = (msg) => {
           try {
             const data = JSON.parse(msg.data || '{}');
-            if (data.type === 'ready') {
-              captureFromRemoteVideo();
-            }
+            if (data.type === 'ready') captureFromRemoteVideo();
           } catch {}
         };
       };
+
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${window.location.host}/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
       subWsRef.current = ws;
+
       ws.onmessage = async (ev) => {
         const data = JSON.parse(ev.data || '{}');
         if (data.type === 'offer') {
@@ -288,19 +290,15 @@ const AskFromImage = () => {
           ws.send(JSON.stringify({ type: 'need-offer' }));
         }
       };
-      ws.onopen = () => {
-        try { ws.send(JSON.stringify({ type: 'need-offer' })); } catch {}
-      };
+
       const outQueue = [];
       pc.onicecandidate = (e) => {
         if (!e.candidate) return;
         const msg = { type: 'ice', candidate: e.candidate };
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(msg));
-        } else {
-          outQueue.push(msg);
-        }
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+        else outQueue.push(msg);
       };
+
       ws.onopen = () => {
         try {
           ws.send(JSON.stringify({ type: 'need-offer' }));
@@ -357,6 +355,7 @@ const AskFromImage = () => {
             )}
           </div>
           <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+
           <div className="mt-3 text-center">
             <input value={room} onChange={e => setRoom(e.target.value)} className="text-sm border border-gray-300 rounded px-2 py-1 mr-2" placeholder="room" />
             <button type="button" onClick={startSubscribe} className="text-sm border border-gray-300 rounded px-2 py-1 mr-2">Connect remote stream</button>
@@ -407,7 +406,7 @@ const AskFromImage = () => {
           </div>
         )}
 
-        {/* Remote stream preview for teacher */}
+        {/* Remote stream preview */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-2">Remote Stream</h2>
           <div className="aspect-video bg-black rounded overflow-hidden">

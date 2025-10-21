@@ -26,7 +26,6 @@ const WorksheetUpload = ({ apiKey, onWorksheetAnalyzed }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
-
   // Remote WebRTC subscribe (teacher side for math)
   const remoteVideoRef = useRef(null);
   const subPcRef = useRef(null);
