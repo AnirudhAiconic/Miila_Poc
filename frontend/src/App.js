@@ -26,7 +26,7 @@ function App() {
       const form = new FormData();
       form.append('email', email);
       form.append('password', password);
-      const res = await fetch('http://localhost:8000/auth/login', { method: 'POST', body: form });
+      const res = await fetch('auth/login', { method: 'POST', body: form });
       if (!res.ok) return false;
       const data = await res.json();
       if (data && data.success) {
