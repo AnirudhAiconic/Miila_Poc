@@ -1,4 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import base64
@@ -22,6 +23,7 @@ except Exception:
 from openai import OpenAI
 import tempfile
 from math_checker import SimpleMathChecker
+from model.processing.video.SinglePageMatcher import SinglePageMatcher
 import re
 import json
 import math
@@ -103,6 +105,10 @@ def _print_registered_routes():
     except Exception as _e:
         print("Could not list routes")
 
+@app.on_event("startup")
+async def startup_event():
+    app.state.page_matcher = SinglePageMatcher("worksheet", verbose=False)
+
 @app.get("/")
 async def root():
     return {"message": "Miila Math Checker API is running!"}
@@ -111,10 +117,14 @@ async def root():
 async def health_check():
     return {"status": "healthy", "service": "miila-math-checker"}
 
+def get_page_matcher(request: Request) -> SinglePageMatcher:
+    return request.app.state.page_matcher       
+
 @app.post("/analyze-worksheet")
 async def analyze_worksheet(
     file: UploadFile = File(...),
-    api_key: str = Form(...)
+    api_key: str = Form(...),
+    page_matcher: SinglePageMatcher = Depends(get_page_matcher)
 ):
     """
     Analyze a math worksheet image and return results with feedback
@@ -153,6 +163,11 @@ async def analyze_worksheet(
             # Initialize math checker with API key
             checker = SimpleMathChecker(openai_api_key=normalized_key)
             
+            #Transform the uploaded image to the original worksheet
+            img_filled = None # open here
+            img_matched = page_matcher.match(img_filled)
+            cv2.imwrite(input_path, img_matched)
+
             # Analyze the worksheet (always use pre-uploaded image)
             result_path, report, summary, analysis = checker.check_worksheet(input_path)
             
