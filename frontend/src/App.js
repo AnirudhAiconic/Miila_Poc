@@ -24,9 +24,9 @@ function App() {
   const handleLogin = async (email, password) => {
     try {
       const form = new FormData();
-      form.append('email', email);
-      form.append('password', password);
-      const res = await fetch('auth/login', { method: 'POST', body: form });
+      form.append('email', email.trim());
+      form.append('password', password.trim());
+      const res = await fetch('/auth/login', { method: 'POST', body: form });
       if (!res.ok) return false;
       const data = await res.json();
       if (data && data.success) {
