@@ -30,38 +30,60 @@ const Login = ({ onLogin }) => {
     setLoading(false);
   };
 
+  const uploadsUrl = (name) => {
+    try {
+      const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      const proto = window.location.protocol;
+      const base = isLocal ? `${proto}//localhost:8000` : '';
+      return `${base}/uploads/${name}`;
+    } catch {
+      return `/uploads/${name}`;
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-white flex justify-center items-start pt-8">
-      <div className="w-full max-w-lg">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="mb-2">
-            {!logoError ? (
-              <img
-                src={triedPng ? '/logo.png' : '/logo.svg'}
-                alt="Miila"
-                className="h-40 mx-auto mb-2"
-                onError={() => {
-                  if (!triedPng) {
-                    setTriedPng(true);
-                  } else {
-                    setLogoError(true);
-                  }
-                }}
-              />
-            ) : (
-              <div className="text-7xl font-bold text-gray-900 mb-2" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                miila
-              </div>
-            )}
-          </div>
-          <h2 className="text-lg font-normal text-gray-700">
-            Sign in to Account
-          </h2>
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
+      <div className="w-full max-w-6xl bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden">
+        {/* Header logo */}
+        <div className="pt-6 pb-2 text-center">
+          {!logoError ? (
+            <img
+              src={triedPng ? '/logo.png' : '/logo.svg'}
+              alt="Miila"
+              className="h-[40px] md:h-[64px] lg:h-[90px] inline-block"
+              onError={() => {
+                if (!triedPng) {
+                  setTriedPng(true);
+                } else {
+                  setLogoError(true);
+                }
+              }}
+            />
+          ) : (
+            <div className="text-2xl font-bold" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>miila</div>
+          )}
         </div>
 
-        {/* Login Form */}
-        <div className="bg-white shadow-lg rounded-lg p-10 border border-gray-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
+          {/* Splash image */}
+          <div className="hidden md:block">
+            <div className="rounded-2xl overflow-hidden border border-gray-200">
+              <img
+                src={uploadsUrl('splash.jpg')}
+                alt="splash"
+                className="w-full h-[460px] object-cover"
+                onError={(e) => { e.currentTarget.src = uploadsUrl('Splash.jpg'); }}
+              />
+            </div>
+          </div>
+
+          {/* Login Form */}
+          <div className="flex items-center justify-center">
+            <div className="w-full max-w-md">
+              <div className="text-center mb-6">
+                <h2 className="text-lg font-semibold text-gray-900">Sign in to Account</h2>
+              </div>
+              <div className="bg-white rounded-2xl border border-gray-200 p-8 shadow-sm">
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
@@ -169,6 +191,9 @@ const Login = ({ onLogin }) => {
               </button>
             </div>
           </form>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -53,8 +53,8 @@ const Dashboard = ({ onLogout }) => {
   if (showApiKeyScreen) {
     return (
       <div className="min-h-screen bg-gray-50 flex">
-        {/* Left Sidebar */}
-        <div className="w-16 bg-white border-r border-gray-200 flex flex-col items-center mt-20 ml-4 rounded-l-xl">
+        {/* Left Sidebar (overlay, no panel) */}
+        <div className="fixed left-7 top-36 z-20 flex flex-col items-center bg-transparent">
           <div className="py-4 border-b border-gray-200 w-full" />
 
           {/* Navigation Icons */}
@@ -213,15 +213,15 @@ const Dashboard = ({ onLogout }) => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      {/* Left Sidebar */}
-      <div className="w-14 bg-transparent flex flex-col items-center mt-16 ml-4">
+      {/* Left Sidebar (overlay, no panel) */}
+      <div className="fixed left-7 top-36 z-20 bg-transparent flex flex-col items-center">
         <div className="w-full h-2" />
-        <nav className="flex flex-col space-y-3 flex-1 py-4">
+        <nav className="flex flex-col space-y-4 flex-1 py-4">
           <div className="relative">
-            {activeTab === 'upload' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            {activeTab === 'upload' && (<div className="absolute -left-2 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
             <button
             onClick={() => setActiveTab('upload')}
-            className={`p-2 rounded-lg transition-colors ${activeTab === 'upload' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
+            className={`p-2 rounded-xl hover:bg-gray-100 transition-colors ${activeTab === 'upload' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             title="Upload Worksheet"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -231,10 +231,10 @@ const Dashboard = ({ onLogout }) => {
           </div>
 
           <div className="relative">
-            {activeTab === 'tutor' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            {activeTab === 'tutor' && (<div className="absolute -left-2 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
             <button
             onClick={() => setActiveTab('tutor')}
-            className={`p-2 rounded-lg transition-colors ${activeTab === 'tutor' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
+            className={`p-2 rounded-xl hover:bg-gray-100 transition-colors ${activeTab === 'tutor' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             title="AI Tutoring"
           >
             <HelpCircle className="h-4 w-4" />
@@ -242,10 +242,10 @@ const Dashboard = ({ onLogout }) => {
           </div>
           
           <div className="relative">
-            {activeTab === 'apikey' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            {activeTab === 'apikey' && (<div className="absolute -left-2 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
             <button
             onClick={() => setActiveTab('apikey')}
-            className={`p-2 rounded-lg transition-colors ${activeTab === 'apikey' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
+            className={`p-2 rounded-xl hover:bg-gray-100 transition-colors ${activeTab === 'apikey' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             title="API Key"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -255,10 +255,10 @@ const Dashboard = ({ onLogout }) => {
           </div>
           
           <div className="relative">
-            {activeTab === 'results' && (<div className="absolute -left-3 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
+            {activeTab === 'results' && (<div className="absolute -left-2 top-1/2 -translate-y-1/2 h-8 w-1.5 bg-red-500 rounded-full" />)}
             <button
             onClick={() => setActiveTab('results')}
-            className={`p-2 rounded-lg transition-colors ${activeTab === 'results' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
+            className={`p-2 rounded-xl hover:bg-gray-100 transition-colors ${activeTab === 'results' ? 'text-black' : 'text-black opacity-60 hover:opacity-100'}`}
             disabled={!results}
             title="Results"
           >
@@ -268,8 +268,8 @@ const Dashboard = ({ onLogout }) => {
             </button>
           </div>
         </nav>
-        <div className="flex flex-col space-y-3 mt-auto">
-          <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors">
+        <div className="flex flex-col space-y-4 mt-auto">
+          <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-xl transition-colors">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -278,7 +278,7 @@ const Dashboard = ({ onLogout }) => {
           
           <button
             onClick={onLogout}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
             title="Logout"
           >
             <LogOut className="h-4 w-4" />
@@ -287,10 +287,10 @@ const Dashboard = ({ onLogout }) => {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col bg-gray-200">
         {/* Header */}
-        <header className="mt-1 mr-2 -ml-16">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 px-3 py-1 flex items-center justify-between">
+        <header className="mt-2 mr-6 ml-5">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 px-4 py-2 flex items-center justify-between">
             {/* Logo left (bigger) */}
             <div className="text-gray-900 pl-2 flex items-center">
               {!logoError ? (
@@ -348,8 +348,10 @@ const Dashboard = ({ onLogout }) => {
         </header>
 
         {/* Main Content */}
-        <div className="bg-white mr-4 mb-4 mt-3 rounded-b-xl shadow-sm flex-1">
-          <div className="px-8 py-8 h-full">
+        <div className="bg-white mr-6 ml-5 mb-6 mt-3 rounded-2xl shadow-sm flex-1 border-l-2 border-gray-300 relative overflow-visible">
+          <div className="absolute left-14 top-1 bottom-1 w-[2px] bg-gray-300 rounded z-10 pointer-events-none"></div>
+          <div className="pl-16 pr-8 py-8 h-full">
+            
 
         {/* Tab Content */}
         <div>

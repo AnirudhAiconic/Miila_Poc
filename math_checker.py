@@ -3,7 +3,9 @@ Simple Math Worksheet Checker - Clean and Direct Approach
 """
 import cv2
 import numpy as np
-import openai
+import os
+from openai import OpenAI
+import httpx
 import json
 import base64
 from typing import List, Dict, Any, Tuple
@@ -14,15 +16,27 @@ class SimpleMathChecker:
     """Simple, clean math worksheet checker"""
     
     def __init__(self, openai_api_key: str):
-        self.client = openai.OpenAI(api_key=openai_api_key)
+        # Workaround: new OpenAI SDK does not accept 'proxies' kw; some envs set OPENAI_PROXY.
+        # Remove legacy env vars to avoid the client being constructed with an unsupported kw internally.
+        for var in ("OPENAI_PROXY",):
+            try:
+                os.environ.pop(var, None)
+            except Exception:
+                pass
+        # If you actually need a proxy, pass via httpx client instead.
+        self.client = OpenAI(api_key=openai_api_key, http_client=httpx.Client())
     
     def analyze_worksheet(self, image_path: str) -> Dict[str, Any]:
         """
         Analyze worksheet using GPT-4o Vision - simple and direct
         """
-        # Encode image
+        # Encode image as PNG to avoid invalid JPEG variants
+        from io import BytesIO
         with open(image_path, "rb") as f:
-            image_data = base64.b64encode(f.read()).decode()
+            pil_img = Image.open(f).convert("RGB")
+            buf = BytesIO()
+            pil_img.save(buf, format="PNG")
+            image_data = base64.b64encode(buf.getvalue()).decode()
         
         # Simple, clear prompt
         prompt = """
@@ -79,7 +93,7 @@ class SimpleMathChecker:
                         "role": "user", 
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
                         ]
                     }
                 ],

@@ -2,14 +2,15 @@ import React, { useRef, useState, useEffect } from 'react';
 import axios from 'axios';
 import { Upload, Volume2, Loader } from 'lucide-react';
 
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  {
-    urls: ['turns:turn.miila.eu:5349', 'turn:turn.miila.eu:3478'],
-    username: 'miila',
-    credential: 'VeryStrongTurnPass123'
-  }
-];
+const getIceServers = () => {
+  const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const isHttp = window.location.protocol === 'http:';
+  if (isLocal && isHttp) return [{ urls: 'stun:stun.l.google.com:19302' }];
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: ['turns:turn.miila.eu:5349', 'turn:turn.miila.eu:3478'], username: 'miila', credential: 'VeryStrongTurnPass123' }
+  ];
+};
 
 const AskFromImage = () => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -27,6 +28,8 @@ const AskFromImage = () => {
   const remoteVideoRef = useRef(null);
   const subPcRef = useRef(null);
   const subWsRef = useRef(null);
+  const gotTrackRef = useRef(false);
+  const negotiateTimerRef = useRef(null);
   const [room, setRoom] = useState('default');
 
   // Local camera modal (optional capture)
@@ -249,12 +252,15 @@ const AskFromImage = () => {
   // --- WebRTC subscribe (teacher side) ---
   const startSubscribe = async () => {
     try {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      // Ensure clean state
+      stopSubscribe();
+      const pc = new RTCPeerConnection({ iceServers: getIceServers() });
       subPcRef.current = pc;
       let remoteStream = new MediaStream();
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
 
       pc.ontrack = (ev) => {
+        gotTrackRef.current = true;
         if (ev.streams && ev.streams[0]) {
           ev.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
         } else if (ev.track) {
@@ -274,20 +280,45 @@ const AskFromImage = () => {
       };
 
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${window.location.host}/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
+      const host = window.location.hostname;
+      const port = window.location.port;
+      const wsBase = (host === 'localhost' || host === '127.0.0.1') && port && port !== '8000'
+        ? `${proto}://localhost:8000`
+        : `${proto}://${window.location.host}`;
+      const ws = new WebSocket(`${wsBase}/ws/signal?room=${encodeURIComponent(room)}&role=sub`);
       subWsRef.current = ws;
 
       ws.onmessage = async (ev) => {
         const data = JSON.parse(ev.data || '{}');
         if (data.type === 'offer') {
-          await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+          const desc = { type: 'offer', sdp: data.sdp };
+          try {
+            if (pc.signalingState !== 'stable') {
+              try { await pc.setLocalDescription({ type: 'rollback' }); } catch {}
+            }
+            await pc.setRemoteDescription(desc);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+          } catch (e) {
+            console.error('Offer handling error:', e);
+          }
         } else if (data.type === 'ice') {
           try { await pc.addIceCandidate(data.candidate); } catch {}
         } else if (data.type === 'hello') {
-          ws.send(JSON.stringify({ type: 'need-offer' }));
+          const hasVideo = remoteVideoRef.current && remoteVideoRef.current.srcObject && remoteVideoRef.current.srcObject.getTracks && remoteVideoRef.current.srcObject.getTracks().length > 0;
+          if (!hasVideo) {
+            try { pc.close(); } catch {}
+            try { ws.close(); } catch {}
+            setTimeout(() => startSubscribe(), 150);
+            return;
+          }
+          try { pc.restartIce?.(); } catch {}
+          try { ws.send(JSON.stringify({ type: 'need-offer' })); } catch {}
+        } else if (data.type === 'bye') {
+          try { pc.getReceivers?.().forEach(r => { try { r.track?.stop(); } catch {} }); } catch {}
+          if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+          gotTrackRef.current = false;
         }
       };
 
@@ -304,6 +335,23 @@ const AskFromImage = () => {
           ws.send(JSON.stringify({ type: 'need-offer' }));
           outQueue.forEach(m => ws.send(JSON.stringify(m)));
         } catch {}
+        gotTrackRef.current = false;
+        let attempts = 0;
+        clearInterval(negotiateTimerRef.current);
+        negotiateTimerRef.current = setInterval(() => {
+          attempts += 1;
+          if (gotTrackRef.current || attempts > 10 || ws.readyState !== WebSocket.OPEN) {
+            clearInterval(negotiateTimerRef.current);
+            negotiateTimerRef.current = null;
+            return;
+          }
+          try { ws.send(JSON.stringify({ type: 'need-offer' })); } catch {}
+        }, 1000);
+      };
+      ws.onclose = () => {
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+        clearInterval(negotiateTimerRef.current);
+        negotiateTimerRef.current = null;
       };
     } catch (e) {
       console.error('Subscribe error:', e);
@@ -312,8 +360,11 @@ const AskFromImage = () => {
 
   const stopSubscribe = () => {
     try { subWsRef.current?.close(); } catch {}
+    try { subPcRef.current?.getSenders?.().forEach(s => { try { s.track?.stop(); } catch {} }); } catch {}
     try { subPcRef.current?.close(); } catch {}
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    subWsRef.current = null;
+    subPcRef.current = null;
   };
 
   const captureFromRemoteVideo = () => {
@@ -331,36 +382,57 @@ const AskFromImage = () => {
         const f = new File([blob], `remote_capture_${Date.now()}.png`, { type: 'image/png' });
         setSelectedFile(f);
         const r = new FileReader();
-        r.onload = (e) => setPreview(e.target.result);
+        r.onload = (e) => {
+          setPreview(e.target.result);
+        };
         r.readAsDataURL(f);
       }, 'image/png');
     } catch {}
   };
+
+  const [activeTab, setActiveTab] = useState('ask');
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-start justify-center pt-8">
       <div className="w-full max-w-3xl">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
           <h1 className="text-xl font-semibold text-gray-900 mb-2">AI Tutoring</h1>
-          <p className="text-gray-600 mb-4">Upload your sheet for this step. The tutor will give a hint for the next one.</p>
-
-          <div className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-gray-400" onClick={() => inputRef.current?.click()}>
-            {preview ? (
-              <img src={preview} alt="preview" className="max-h-64 mx-auto rounded" />
-            ) : (
-              <div className="text-gray-400">
-                <Upload className="mx-auto h-12 w-12" />
-                <p className="mt-2">Click to choose an image</p>
-              </div>
-            )}
+          <div className="border-b border-gray-200 mt-2">
+            <nav className="flex space-x-8">
+              <button onClick={() => setActiveTab('ask')} className={`pb-3 text-sm font-medium ${activeTab==='ask' ? 'text-gray-900 border-b-2 border-gray-900' : 'text-black hover:text-black'}`}>Ask</button>
+              <button onClick={() => setActiveTab('remote')} className={`pb-3 text-sm font-medium ${activeTab==='remote' ? 'text-gray-900 border-b-2 border-gray-900' : 'text-black hover:text-black'}`}>Remote stream</button>
+            </nav>
           </div>
-          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
 
+          {activeTab === 'ask' && (
+          <>
+            <div className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-gray-400" onClick={() => inputRef.current?.click()}>
+              {preview ? (
+                <img src={preview} alt="preview" className="max-h-64 mx-auto rounded" />
+              ) : (
+                <div className="text-gray-400">
+                  <Upload className="mx-auto h-12 w-12" />
+                  <p className="mt-2">Click to choose an image</p>
+                </div>
+              )}
+            </div>
+            <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+          </>
+          )}
+          {activeTab === 'remote' && (
           <div className="mt-3 text-center">
             <input value={room} onChange={e => setRoom(e.target.value)} className="text-sm border border-gray-300 rounded px-2 py-1 mr-2" placeholder="room" />
-            <button type="button" onClick={startSubscribe} className="text-sm border border-gray-300 rounded px-2 py-1 mr-2">Connect remote stream</button>
-            <button type="button" onClick={stopSubscribe} className="text-sm border border-gray-300 rounded px-2 py-1">Disconnect</button>
+            <button type="button" onClick={startSubscribe} className="text-sm border border-gray-300 rounded px-2 py-1 mr-2">Start</button>
+            <button type="button" onClick={stopSubscribe} className="text-sm border border-gray-300 rounded px-2 py-1">Stop</button>
           </div>
+          )}
+
+          {activeTab === 'remote' && preview && (
+            <div className="mt-3">
+              <div className="text-sm text-gray-600 mb-1">Last snapped frame:</div>
+              <img src={preview} alt="snapped preview" className="max-h-36 rounded border border-gray-200" />
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 rounded mt-4 p-3 text-sm text-red-700">{error}</div>
@@ -407,15 +479,17 @@ const AskFromImage = () => {
         )}
 
         {/* Remote stream preview */}
+        {activeTab === 'remote' && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-2">Remote Stream</h2>
           <div className="aspect-video bg-black rounded overflow-hidden">
             <video ref={remoteVideoRef} className="w-full h-full object-contain" autoPlay playsInline muted />
           </div>
-          <div className="mt-3">
+          <div className="mt-3 flex items-center space-x-3">
             <button onClick={captureFromRemoteVideo} className="bg-black hover:bg-gray-900 text-white font-medium py-2 px-4 rounded">Snap from stream</button>
           </div>
         </div>
+        )}
 
         {/* Camera Modal */}
         {cameraOpen && (

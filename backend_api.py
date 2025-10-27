@@ -1,11 +1,13 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 import base64
 import io
 import os
 from PIL import Image
 import cv2
+import numpy as np
 try:
     import torch
 except Exception:
@@ -95,6 +97,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve static uploads (e.g., splash image for login)
+try:
+    _uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
+    os.makedirs(_uploads_dir, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
+except Exception:
+    # If static mounting fails, continue without blocking the API
+    pass
+
 @app.on_event("startup")
 def _print_registered_routes():
     try:
@@ -114,7 +125,8 @@ async def health_check():
 @app.post("/analyze-worksheet")
 async def analyze_worksheet(
     file: UploadFile = File(...),
-    api_key: str = Form(...)
+    api_key: str = Form(...),
+    align: str | None = Form(None)
 ):
     """
     Analyze a math worksheet image and return results with feedback
@@ -138,6 +150,7 @@ async def analyze_worksheet(
         if not candidates:
             raise HTTPException(status_code=400, detail=f"No pre-uploaded worksheet found in {upload_dir}. Place a PNG/JPG there.")
         input_path = max(candidates, key=lambda p: os.path.getmtime(p))
+        aligned_temp_path = None
         
         try:
             # Normalize API key (handle 'OPENAI_API_KEY=sk-...' or quotes)
@@ -153,8 +166,158 @@ async def analyze_worksheet(
             # Initialize math checker with API key
             checker = SimpleMathChecker(openai_api_key=normalized_key)
             
-            # Analyze the worksheet (always use pre-uploaded image)
-            result_path, report, summary, analysis = checker.check_worksheet(input_path)
+            # Optional alignment: if requested, try aligning uploaded file to template
+            used_source = "fixed"
+            if align is not None and str(align).lower() in ("1", "true", "yes"):
+                contents = await file.read()
+                if not contents:
+                    raise HTTPException(status_code=422, detail="Alignment failed: empty upload")
+                # Default to fail unless we succeed aligning
+                use_path = None
+                try:
+                        # Decode captured image
+                        np_buf = np.frombuffer(contents, dtype=np.uint8)
+                        captured = cv2.imdecode(np_buf, cv2.IMREAD_COLOR)
+                        template = cv2.imread(input_path, cv2.IMREAD_COLOR)
+                        if captured is not None and template is not None:
+                            # Optional: first detect and rectify the page region to reduce background influence
+                            tw, th = template.shape[1], template.shape[0]
+                            try:
+                                gray = cv2.cvtColor(captured, cv2.COLOR_BGR2GRAY)
+                                gray = cv2.GaussianBlur(gray, (5,5), 0)
+                                edges = cv2.Canny(gray, 50, 150)
+                                contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+                                contours = sorted(contours, key=cv2.contourArea, reverse=True)[:15]
+                                quad = None
+                                for cnt in contours:
+                                    peri = cv2.arcLength(cnt, True)
+                                    approx = cv2.approxPolyDP(cnt, 0.02*peri, True)
+                                    if len(approx) == 4:
+                                        area = cv2.contourArea(approx)
+                                        if area < 0.2 * (captured.shape[0]*captured.shape[1]):
+                                            continue
+                                        box = approx.reshape(4,2).astype(np.float32)
+                                        # aspect filter against template
+                                        w = np.linalg.norm(box[1]-box[0])
+                                        h = np.linalg.norm(box[3]-box[0])
+                                        asp = (w / max(1e-6,h)) if h>0 else 1.0
+                                        tmpl_asp = tw / max(1, th)
+                                        if 0.6*tmpl_asp <= asp <= 1.4*tmpl_asp:
+                                            quad = box
+                                            break
+                                if quad is not None:
+                                    # Order points (tl,tr,br,bl)
+                                    s = quad.sum(axis=1)
+                                    diff = np.diff(quad, axis=1).reshape(-1)
+                                    tl = quad[np.argmin(s)]
+                                    br = quad[np.argmax(s)]
+                                    tr = quad[np.argmin(diff)]
+                                    bl = quad[np.argmax(diff)]
+                                    src_quad = np.float32([tl, tr, br, bl])
+                                    dst_quad = np.float32([[0,0],[tw-1,0],[tw-1,th-1],[0,th-1]])
+                                    M = cv2.getPerspectiveTransform(src_quad, dst_quad)
+                                    captured_rect = cv2.warpPerspective(captured, M, (tw, th))
+                                else:
+                                    captured_rect = captured
+                            except Exception:
+                                captured_rect = captured
+
+                            # Feature-based homography with rotations and AKAZE→ORB fallback
+                            warped = None
+                            align_logs = []
+                            def try_feature_align(img):
+                                detectors = []
+                                try:
+                                    detectors.append(cv2.AKAZE_create())
+                                except Exception:
+                                    pass
+                                detectors.append(cv2.ORB_create(7000))
+                                best = None
+                                best_inliers = -1
+                                for det in detectors:
+                                    try:
+                                        kp1, des1 = det.detectAndCompute(img, None)
+                                        kp2, des2 = det.detectAndCompute(template, None)
+                                        if des1 is None or des2 is None or len(kp1) < 8 or len(kp2) < 8:
+                                            continue
+                                        bf = cv2.BFMatcher(cv2.NORM_HAMMING)
+                                        matches = bf.knnMatch(des1, des2, k=2)
+                                        ratio = 0.88 if det.__class__.__name__.lower().startswith('akaze') else 0.82
+                                        good = [m for m, n in matches if m.distance < ratio * n.distance]
+                                        if len(good) < 8:
+                                            continue
+                                        src = np.float32([kp1[m.queryIdx].pt for m in good])
+                                        dst = np.float32([kp2[m.trainIdx].pt for m in good])
+                                        H, inliers = cv2.findHomography(src, dst, cv2.RANSAC, 6.0)
+                                        inl = int(inliers.sum()) if inliers is not None else 0
+                                        # Debug counters
+                                        try:
+                                            msg = f"align: det={det.__class__.__name__} good={len(good)} inliers={inl}"
+                                            align_logs.append(msg)
+                                            print(msg)
+                                        except Exception:
+                                            pass
+                                        if H is None or inl < 6:
+                                            continue
+                                        if inl > best_inliers:
+                                            best_inliers = inl
+                                            best = cv2.warpPerspective(img, H, (tw, th))
+                                    except Exception:
+                                        continue
+                                return best
+
+                            # Try multiple rotations of captured_rect
+                            rotations = [captured_rect,
+                                         cv2.rotate(captured_rect, cv2.ROTATE_90_CLOCKWISE),
+                                         cv2.rotate(captured_rect, cv2.ROTATE_180),
+                                         cv2.rotate(captured_rect, cv2.ROTATE_90_COUNTERCLOCKWISE)]
+                            for img_r in rotations:
+                                warped = try_feature_align(img_r)
+                                if warped is not None:
+                                    break
+
+                            # ECC fallback if features fail
+                            if warped is None:
+                                try:
+                                    gray_t = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                                    gray_i = cv2.cvtColor(captured_rect, cv2.COLOR_BGR2GRAY)
+                                    gray_t = cv2.normalize(gray_t.astype(np.float32), None, 0.0, 1.0, cv2.NORM_MINMAX)
+                                    gray_i = cv2.normalize(gray_i.astype(np.float32), None, 0.0, 1.0, cv2.NORM_MINMAX)
+                                    warp_matrix = np.eye(3, dtype=np.float32)
+                                    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6)
+                                    try:
+                                        cc, warp_matrix = cv2.findTransformECC(gray_t, gray_i, warp_matrix, cv2.MOTION_HOMOGRAPHY, criteria, None, 5)
+                                        warped = cv2.warpPerspective(captured_rect, warp_matrix, (tw, th))
+                                        try:
+                                            align_logs.append(f"align: ECC cc={cc:.4f}")
+                                        except Exception:
+                                            pass
+                                    except Exception:
+                                        warped = None
+                                except Exception:
+                                    warped = None
+
+                            if warped is not None:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t:
+                                    cv2.imwrite(t.name, warped)
+                                    aligned_temp_path = t.name
+                                    use_path = aligned_temp_path
+                                    used_source = "aligned"
+                except HTTPException:
+                    raise
+                except Exception:
+                    # Unknown alignment exception: surface a clear 422 instead of falling back
+                    raise HTTPException(status_code=422, detail="Alignment failed: internal alignment error")
+
+                if use_path is None:
+                    # Explicitly fail if we didn't produce an aligned image
+                    log_msg = "; ".join(align_logs[-5:]) if 'align_logs' in locals() and align_logs else "no matches"
+                    raise HTTPException(status_code=422, detail=f"Alignment failed: could not compute homography ({log_msg})")
+            else:
+                use_path = input_path
+
+            # Analyze the worksheet (use aligned image if available; else fixed template)
+            result_path, report, summary, analysis = checker.check_worksheet(use_path)
             
             # Read the annotated image
             annotated_image_b64 = None
@@ -193,6 +356,7 @@ async def analyze_worksheet(
                 "summary": summary,
                 "annotated_image": annotated_image_b64,
                 "total_problems": len(problems),
+                "used_source": used_source,
                 "stats": {
                     "perfect": len([p for p in problems if p.get('status') == 'perfect']),
                     "correct_no_steps": len([p for p in problems if p.get('status') == 'correct_no_steps']),
@@ -213,11 +377,19 @@ async def analyze_worksheet(
             # Detect invalid API key and return 401
             if "invalid_api_key" in err or "Incorrect API key provided" in err:
                 raise HTTPException(status_code=401, detail="Invalid OpenAI API key")
+            # Propagate exact analysis error for easier debugging
             raise HTTPException(status_code=500, detail=f"Analysis failed: {err}")
         
         finally:
-            pass
+            try:
+                if aligned_temp_path and os.path.exists(aligned_temp_path):
+                    os.unlink(aligned_temp_path)
+            except Exception:
+                pass
                 
+    except HTTPException as he:
+        # Don't re-wrap HTTPExceptions; return exact detail/status
+        raise he
     except Exception as e:
         # Avoid emoji in console
         try:

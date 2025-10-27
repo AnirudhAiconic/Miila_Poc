@@ -1,13 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  {
-    urls: ['turns:turn.miila.eu:5349', 'turn:turn.miila.eu:3478'],
-    username: 'miila',
-    credential: 'VeryStrongTurnPass123'
+const getIceServers = () => {
+  const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const isHttp = window.location.protocol === 'http:';
+  if (isLocal && isHttp) {
+    return [ { urls: 'stun:stun.l.google.com:19302' } ];
   }
-];
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    {
+      urls: ['turns:turn.miila.eu:5349', 'turn:turn.miila.eu:3478'],
+      username: 'miila',
+      credential: 'VeryStrongTurnPass123'
+    }
+  ];
+};
 
 const StudentPublisher = () => {
   const [room, setRoom] = useState('default');
@@ -32,6 +39,13 @@ const StudentPublisher = () => {
 
   const wsBase = () => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    // In local dev (CRA on :3000), proxy /ws to backend :8000 may not be active until restart.
+    // Use backend port directly when running on localhost dev server.
+    const host = window.location.hostname;
+    const port = window.location.port;
+    if ((host === 'localhost' || host === '127.0.0.1') && port && port !== '8000') {
+      return `${proto}://localhost:8000`;
+    }
     return `${proto}://${window.location.host}`;
   };
 
@@ -52,7 +66,13 @@ const StudentPublisher = () => {
   };
 
   const start = async () => {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    // Clean up any previous session
+    try { wsRef.current?.close(); } catch {}
+    try { pcRef.current?.close(); } catch {}
+    try { localStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    setConnected(false);
+
+    const pc = new RTCPeerConnection({ iceServers: getIceServers() });
     pcRef.current = pc;
 
     // Local media
@@ -85,6 +105,25 @@ const StudentPublisher = () => {
       finally { makingOfferRef.current = false; }
     };
 
+    const resendOrOffer = async () => {
+      try {
+        if (!pc) return;
+        const ld = pc.localDescription;
+        if (pc.signalingState === 'have-local-offer' && ld && ld.sdp) {
+          const msg = { type: 'offer', sdp: ld.sdp };
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+          else outQueueRef.current.push(msg);
+          return;
+        }
+        if (pc.signalingState === 'stable') {
+          await sendOffer();
+          return;
+        }
+        // Retry shortly until stable/have-local-offer
+        setTimeout(resendOrOffer, 200);
+      } catch {}
+    };
+
     ws.onmessage = async (ev) => {
       const data = JSON.parse(ev.data || '{}');
       if (data.type === 'answer') {
@@ -94,7 +133,7 @@ const StudentPublisher = () => {
       } else if (data.type === 'ice') {
         try { await pc.addIceCandidate(data.candidate); } catch {}
       } else if (data.type === 'need-offer') {
-        await sendOffer();
+        await resendOrOffer();
       }
     };
 
@@ -108,8 +147,21 @@ const StudentPublisher = () => {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      const st = pc.iceConnectionState;
+      if (st === 'failed' || st === 'disconnected' || st === 'closed') {
+        try { ws.close(); } catch {}
+        try { pc.close(); } catch {}
+        try { localStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+        setConnected(false);
+      }
+    };
+
     pc.onnegotiationneeded = async () => { await sendOffer(); };
     ws.onopen = () => {
+      // Announce presence so late subscribers can request a fresh offer
+      try { ws.send(JSON.stringify({ type: 'hello' })); } catch {}
+      // If subscriber is already online, they'll request need-offer. Still, we attempt once.
       sendOffer();
       try {
         outQueueRef.current.forEach((m) => ws.send(JSON.stringify(m)));
@@ -169,6 +221,7 @@ const StudentPublisher = () => {
   };
 
   const stop = () => {
+    try { wsRef.current?.send(JSON.stringify({ type: 'bye' })); } catch {}
     try { wsRef.current?.close(); } catch {}
     try { pcRef.current?.close(); } catch {}
     try { localStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
