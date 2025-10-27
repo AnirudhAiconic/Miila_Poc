@@ -135,7 +135,7 @@ async def analyze_worksheet(
         # Validate file type (frontend may still send a dummy image)
         if not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="File must be an image")
-
+        
         # Always use the most recently pre-uploaded worksheet from uploads/fixed
         upload_dir = os.path.join(os.path.dirname(__file__), 'uploads', 'fixed')
         os.makedirs(upload_dir, exist_ok=True)
@@ -325,10 +325,10 @@ async def analyze_worksheet(
                 with open(result_path, 'rb') as img_file:
                     img_data = img_file.read()
                     annotated_image_b64 = base64.b64encode(img_data).decode('utf-8')
-
+                
                 # Clean up the result file immediately (do not persist reports)
                 try:
-                    os.unlink(result_path)
+                os.unlink(result_path)
                 except Exception:
                     pass
 
