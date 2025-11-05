@@ -22,6 +22,7 @@ except Exception:
     TrOCRProcessor = None
     VisionEncoderDecoderModel = None
 from openai import OpenAI
+import httpx
 import tempfile
 from math_checker import SimpleMathChecker
 import re
@@ -30,6 +31,7 @@ import math
 from functools import lru_cache
 import threading
 import uuid
+import time
 
 app = FastAPI(title="Miila Math Checker API", version="1.0.0")
 # -------------------------------
@@ -328,7 +330,7 @@ async def analyze_worksheet(
                 
                 # Clean up the result file immediately (do not persist reports)
                 try:
-                os.unlink(result_path)
+                    os.unlink(result_path)
                 except Exception:
                     pass
 
@@ -743,6 +745,340 @@ async def tutor_next(
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
+@app.post("/tutor/voice_turn")
+async def tutor_voice_turn(
+    audio: UploadFile = File(...),
+    history: str = Form("[]"),
+    api_key: str | None = Form(None),
+    turn_cap: int | None = Form(5),
+):
+    """
+    Transcribe student's voice, generate a short kid-friendly follow-up (until turn_cap),
+    or a concise final answer after that. Returns text and base64-encoded TTS audio.
+    Stateless: the client sends prior turns in `history` (array of {role: 'student'|'tutor', text}).
+    """
+    tmp_path = None
+    try:
+        # Determine API key (prefer provided; else env)
+        raw_key = (api_key or os.getenv("MIILA_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip().strip('"').strip("'")
+        match = re.search(r"(sk-[A-Za-z0-9_\-]{20,})", raw_key)
+        normalized_key = match.group(1) if match else None
+        if not normalized_key:
+            raise HTTPException(status_code=400, detail="Missing OpenAI API key. Set MIILA_OPENAI_API_KEY or send api_key.")
+
+        # Persist upload to temp file for Whisper
+        contents = await audio.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Empty audio upload")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as t:
+            t.write(contents)
+            tmp_path = t.name
+
+        # Avoid legacy env that can inject unsupported 'proxies' kw
+        try:
+            os.environ.pop("OPENAI_PROXY", None)
+        except Exception:
+            pass
+        # Transcribe with Whisper
+        client = OpenAI(api_key=normalized_key, http_client=httpx.Client())
+        recognized_text = ""
+        try:
+            with open(tmp_path, "rb") as f:
+                tr = client.audio.transcriptions.create(model="whisper-1", file=f)
+                recognized_text = (getattr(tr, "text", None) or "").strip()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+        # Prepare conversation for LLM
+        try:
+            h = json.loads(history or "[]")
+            if not isinstance(h, list):
+                h = []
+        except Exception:
+            h = []
+        # Helper: extract topic from first meaningful student turn
+        def _first_meaningful_student(msgs: list[dict]) -> str:
+            for m in msgs:
+                if isinstance(m, dict) and m.get("role") == "student":
+                    txt = (m.get("text") or "").strip()
+                    if len(txt) >= 6 and txt.lower() not in ("hi", "hello", "hey", "i want to learn something", "i want to learn", "i would like to learn something today."):
+                        return txt
+            return ""
+        topic_hint = _first_meaningful_student(h)
+        last_student = ""
+        for m in reversed(h):
+            if isinstance(m, dict) and m.get("role") == "student":
+                last_student = (m.get("text") or "").strip()
+                if last_student:
+                    break
+
+        # If transcription failed, ask the student to repeat without advancing the turn
+        if not (recognized_text or "").strip():
+            tutor_text = (
+                f"Sorry, I didn't catch that. Still on '{topic_hint or last_student or 'our topic'}', could you repeat in one short sentence?"
+            )
+            # TTS best-effort
+            audio_b64 = None
+            try:
+                with client.audio.speech.with_streaming_response.create(
+                    model="gpt-4o-mini-tts",
+                    voice="alloy",
+                    input=tutor_text,
+                ) as resp:
+                    audio_bytes = resp.read()
+                    if audio_bytes:
+                        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+            except Exception:
+                pass
+            payload = {
+                "recognized_text": "",
+                "tutor_message": tutor_text,
+                "done": False,
+            }
+            if audio_b64:
+                payload["audio_b64"] = audio_b64
+            return JSONResponse(content=payload)
+
+        # Count student turns so far (plus this one) — ignore empty or transcribe-fail turns
+        def _valid_student_text(txt: str) -> bool:
+            if not txt:
+                return False
+            t = txt.strip().lower()
+            if t in ("(could not transcribe)", "…", "..."):
+                return False
+            return len(t) >= 2
+        student_turns = sum(
+            1 for m in h
+            if isinstance(m, dict) and m.get("role") == "student" and _valid_student_text((m.get("text") or ""))
+        )
+        TURN_CAP = int(turn_cap or 5)
+        next_is_final = (student_turns + 1) >= TURN_CAP
+
+        system_prompt = (
+            "You are a friendly elementary tutor.\n"
+        "Each turn MUST follow this exact shape:\n"
+        "1) Praise the student's last answer in 2-6 words (e.g., 'Nice thought!', 'Good start!').\n"
+        "2) Give ONE tiny, concrete fact that advances the SAME topic (no more than one sentence).\n"
+        "3) Ask ONE short, targeted question (prefer A/B choices).\n"
+        "If the student says 'I don't know', give an easier clue and a simple A/B question.\n"
+        "Never ask meta-questions (e.g., 'What topic?'). Never switch topics.\n"
+        "Keep replies ≤ 2 sentences before the question; the question is the last sentence.\n"
+        "After the configured number of student turns, DO NOT ask a question; give a concise final answer (≤ 3 sentences).\n"
+        )
+
+        messages_llm = [{"role": "system", "content": system_prompt}]
+
+        # tiny few-shot to anchor the shape
+        fewshot = [
+            {"role": "user", "content": "What is life like on a spaceship?"},
+            {"role": "assistant", "content": "Great start! Astronauts keep routines every day. Tiny fact: they must exercise to stay strong. Choose one: A) exercise daily B) skip exercise?"}
+        ]
+        messages_llm += fewshot
+
+        # append prior history
+        for m in h:
+            role = m.get("role")
+            txt = (m.get("text") or "").strip()
+            if not txt:
+                continue
+            if role == "student":
+                messages_llm.append({"role": "user", "content": txt})
+            elif role == "tutor":
+                messages_llm.append({"role": "assistant", "content": txt})
+        # Append the newly recognized student utterance
+        if recognized_text:
+            messages_llm.append({"role": "user", "content": recognized_text})
+
+        # Lock topic and merge guardrails + stage into the same system message
+        topic = (topic_hint or last_student or recognized_text or "the student's original question")
+        try:
+            student_only = [
+                (m.get("text") or "").strip()
+                for m in h
+                if isinstance(m, dict) and m.get("role") == "student" and (m.get("text") or "").strip()
+            ]
+            convo_mem = "; ".join(student_only[-4:])
+        except Exception:
+            convo_mem = ""
+        guardrails = (
+            "Conversation so far (student turns): " + convo_mem + ". "
+            f"Stay strictly on topic: '{topic}'. "
+            f"Your next line must reference the student's last message: '{last_student or recognized_text}'. "
+            "Do NOT ask generic/meta questions."
+        )
+        if next_is_final:
+            stage_line = (
+                f"Topic: {topic}. NOW OUTPUT ONLY the final concise answer (≤ 5 sentences). Do not ask any question."
+            )
+        else:
+            stage_line = (
+                f"Topic: {topic}. Use the required 3-part shape: Praise → ONE tiny fact → ONE short A/B question."
+            )
+        messages_llm[0]["content"] = system_prompt + "\n" + guardrails + "\n" + stage_line
+
+        # JSON-only shaping (non-hardcoded)
+        # Detect simple "I don't know" so we can nudge the model for an easier clue + A/B
+        is_idk = bool(re.search(r"\bi don['’]?t know\b", (recognized_text or '').strip().lower()))
+
+        if next_is_final:
+            schema_instructions = (
+                "Return ONLY valid minified JSON with this shape:\n"
+                '{"final_answer":"<=5 sentences, concise, no question"}'
+            )
+        else:
+            schema_instructions = (
+                "Return ONLY valid minified JSON with this shape:\n"
+                '{"praise":"2-6 words",'
+                '"tiny_fact":"ONE short fact that advances exactly this topic",'
+                '"ab_question":"ONE short A/B question ending with a question mark"}'
+            )
+            if is_idk:
+                schema_instructions += " The student said 'I don't know'. Give one easier clue, then a simple A/B question."
+
+        # Merge schema and rules into the existing single system message to avoid dilution
+        messages_llm[0]["content"] += (
+            "\nYou must output JSON ONLY for the next reply.\n"
+            "Rules:\n"
+            "- Never switch topics and never ask meta-questions.\n"
+            "- For non-final turns: Praise (2–6 words) → ONE tiny fact (≤1 sentence) → ONE short A/B question (end with '?').\n"
+            f"- The tiny_fact MUST directly address the student's last message: '{(last_student or recognized_text).strip()}'. If that last line is a question, give a 1‑sentence direct answer before the A/B question; if it is a statement (e.g., 'bat and ball'), acknowledge it and add ONE small related fact.\n"
+            f"- The ab_question MUST reuse at least one noun from the student's last line: '{(last_student or recognized_text).strip()}'.\n"
+            "- For the final turn: ONLY a concise 3–4 sentence answer, no question.\n"
+            "- Output strictly JSON (no prose, no Markdown, no code fences).\n"
+            f"{schema_instructions}"
+        )
+
+        def _safe_json_parse(s: str):
+            try:
+                return json.loads(s)
+            except Exception:
+                try:
+                    start = s.find("{"); end = s.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        return json.loads(s[start:end+1])
+                except Exception:
+                    pass
+            return None
+
+        def _format_from_json(payload: dict, final_phase: bool) -> str:
+            if final_phase:
+                ans = (payload or {}).get("final_answer", "").strip()
+                parts = [p.strip() for p in re.split(r"[.?!]", ans) if p.strip()]
+                out = ". ".join(parts[:3]).strip()
+                if out and out.endswith("?"): out = out.rstrip("?") + "."
+                if out and not out.endswith("."): out += "."
+                return out or "Here’s a quick summary."
+            praise = ((payload or {}).get("praise") or "").strip()
+            fact  = ((payload or {}).get("tiny_fact") or "").strip()
+            q     = ((payload or {}).get("ab_question") or "").strip()
+            if q and not q.endswith("?"): q += "?"
+            if not praise: praise = "Nice thinking!"
+            if not fact:   fact   = "Tiny fact: a small step helps a lot."
+            if not q:      q      = "Choose one: A) this B) that?"
+            return f"{praise} {fact} {q}"
+
+        def _generic_fallback(text: str, final_phase: bool) -> str:
+            t = (text or "").strip().replace("\n", " ")
+            if final_phase:
+                parts = [p.strip() for p in re.split(r"[.?!]", t) if p.strip()]
+                out = ". ".join(parts[:3]).strip()
+                if out and out.endswith("?"): out = out.rstrip("?") + "."
+                if out and not out.endswith("."): out += "."
+                return out or "Here’s a quick summary."
+            first = re.split(r"[.?!]", t, maxsplit=1)[0].strip()
+            keep = first + "." if 6 <= len(first.split()) <= 18 else ""
+            pieces = [
+                "Great job!",
+                keep or "Tiny fact: one simple habit improves results.",
+                "Choose one: A) this B) that?"
+            ]
+            out = " ".join(pieces).strip()
+            return re.sub(r"\s+", " ", out)
+
+        # First attempt
+        try:
+            cmp = client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages_llm,
+                temperature=0.15,
+                max_tokens=180,
+                response_format={"type": "json_object"}
+            )
+            raw = (cmp.choices[0].message.content or "").strip()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"LLM failed: {str(e)}")
+
+        payload = _safe_json_parse(raw)
+
+        # Retry once if JSON invalid
+        if payload is None:
+            messages_llm.append({"role": "system", "content": "Your previous output was not valid JSON. Return ONLY the JSON object now."})
+            try:
+                cmp2 = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=messages_llm,
+                    temperature=0.05,
+                    max_tokens=160,
+                    response_format={"type": "json_object"}
+                )
+                raw2 = (cmp2.choices[0].message.content or "").strip()
+                payload = _safe_json_parse(raw2)
+            except Exception:
+                payload = None
+
+        # Format final tutor_text deterministically
+        if payload is not None:
+            tutor_text = _format_from_json(payload, next_is_final)
+        else:
+            tutor_text = _generic_fallback(raw, next_is_final)
+
+        # TTS generation (best-effort)
+        audio_b64 = None
+        try:
+            # Prefer streaming when available
+            with client.audio.speech.with_streaming_response.create(
+                model="gpt-4o-mini-tts",
+                voice="alloy",
+                input=tutor_text or "",
+            ) as resp:
+                audio_bytes = resp.read()
+                if audio_bytes:
+                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        except Exception:
+            try:
+                # Fallback non-streaming
+                resp2 = client.audio.speech.create(
+                    model="gpt-4o-mini-tts",
+                    voice="alloy",
+                    input=tutor_text or "",
+                )
+                audio_bytes = resp2.read()
+                if audio_bytes:
+                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+            except Exception:
+                audio_b64 = None
+
+        payload = {
+            "recognized_text": recognized_text,
+            "tutor_message": tutor_text,
+            "done": bool(next_is_final),
+        }
+        if next_is_final:
+            payload["final_answer"] = tutor_text
+        if audio_b64:
+            payload["audio_b64"] = audio_b64
+        return JSONResponse(content=payload)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+    finally:
+        try:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except Exception:
+            pass
+
 @app.post("/validate-api-key")
 async def validate_api_key(api_key: str = Form(...)):
     """
@@ -756,7 +1092,11 @@ async def validate_api_key(api_key: str = Form(...)):
             return {"valid": False, "message": "API key must contain a valid sk- token"}
 
         # Try a minimal call: list models (cheap and fast)
-        client = OpenAI(api_key=normalized_key)
+        try:
+            os.environ.pop("OPENAI_PROXY", None)
+        except Exception:
+            pass
+        client = OpenAI(api_key=normalized_key, http_client=httpx.Client())
         try:
             _ = client.models.list()
         except Exception as e:
