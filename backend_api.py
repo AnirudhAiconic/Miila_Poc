@@ -908,7 +908,7 @@ async def tutor_voice_turn(
         )
         if next_is_final:
             stage_line = (
-                f"Topic: {topic}. NOW OUTPUT ONLY the final concise answer (≤ 5 sentences). Do not ask any question."
+                f"Topic: {topic}. NOW OUTPUT ONLY the final elaborated answer (≤ 5 sentences). Do not ask any question."
             )
         else:
             stage_line = (
@@ -923,7 +923,7 @@ async def tutor_voice_turn(
         if next_is_final:
             schema_instructions = (
                 "Return ONLY valid minified JSON with this shape:\n"
-                '{"final_answer":"<=5 sentences, concise, no question"}'
+                '{"final_answer":"<=5 sentences, elaborated, no question"}'
             )
         else:
             schema_instructions = (
@@ -943,7 +943,7 @@ async def tutor_voice_turn(
             "- For non-final turns: Praise (2–6 words) → ONE tiny fact (≤1 sentence) → ONE short A/B question (end with '?').\n"
             f"- The tiny_fact MUST directly address the student's last message: '{(last_student or recognized_text).strip()}'. If that last line is a question, give a 1‑sentence direct answer before the A/B question; if it is a statement (e.g., 'bat and ball'), acknowledge it and add ONE small related fact.\n"
             f"- The ab_question MUST reuse at least one noun from the student's last line: '{(last_student or recognized_text).strip()}'.\n"
-            "- For the final turn: ONLY a concise 3–4 sentence answer, no question.\n"
+            "- For the final turn: Elaborate with a 3–4 sentence answer, no question.\n"
             "- Output strictly JSON (no prose, no Markdown, no code fences).\n"
             f"{schema_instructions}"
         )
@@ -995,18 +995,28 @@ async def tutor_voice_turn(
             out = " ".join(pieces).strip()
             return re.sub(r"\s+", " ", out)
 
+        # Helper that tries 4o with JSON, falls back to 4o-mini with JSON, then 4o-mini without JSON
+        def _chat_json(client_obj, msgs, temp, max_tok):
+            attempts = [
+                ("gpt-4o", True),
+                ("gpt-4o-mini", True),
+                ("gpt-4o-mini", False),
+            ]
+            last_err = None
+            for model_name, use_json in attempts:
+                try:
+                    kwargs = dict(model=model_name, messages=msgs, temperature=temp, max_tokens=max_tok)
+                    if use_json:
+                        kwargs["response_format"] = {"type": "json_object"}
+                    cmp_local = client_obj.chat.completions.create(**kwargs)
+                    return (cmp_local.choices[0].message.content or "").strip()
+                except Exception as ex:
+                    last_err = ex
+                    continue
+            raise HTTPException(status_code=500, detail=f"LLM failed: {last_err}")
+
         # First attempt
-        try:
-            cmp = client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages_llm,
-                temperature=0.15,
-                max_tokens=180,
-                response_format={"type": "json_object"}
-            )
-            raw = (cmp.choices[0].message.content or "").strip()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"LLM failed: {str(e)}")
+        raw = _chat_json(client, messages_llm, 0.15, 180)
 
         payload = _safe_json_parse(raw)
 
@@ -1014,14 +1024,7 @@ async def tutor_voice_turn(
         if payload is None:
             messages_llm.append({"role": "system", "content": "Your previous output was not valid JSON. Return ONLY the JSON object now."})
             try:
-                cmp2 = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=messages_llm,
-                    temperature=0.05,
-                    max_tokens=160,
-                    response_format={"type": "json_object"}
-                )
-                raw2 = (cmp2.choices[0].message.content or "").strip()
+                raw2 = _chat_json(client, messages_llm, 0.05, 160)
                 payload = _safe_json_parse(raw2)
             except Exception:
                 payload = None
