@@ -631,7 +631,7 @@ async def ask(file: UploadFile = File(...)):
             temp_path = tmp_file.name
 
         # Hardcoded recognized text (POC)
-        query_text = "What is life like on a spaceship?"
+        query_text = "Question from anything"
 
         simplified = query_text
 
@@ -859,21 +859,14 @@ async def tutor_voice_turn(
         "Each turn MUST follow this exact shape:\n"
         "1) Praise the student's last answer in 2-6 words (e.g., 'Nice thought!', 'Good start!').\n"
         "2) Give ONE tiny, concrete fact that advances the SAME topic (no more than one sentence).\n"
-        "3) Ask ONE short, targeted question (prefer A/B choices).\n"
-        "If the student says 'I don't know', give an easier clue and a simple A/B question.\n"
+        "3) Ask ONE short, targeted question.\n"
+        "If the student says 'I don't know', give an easier clue and a simple question.\n"
         "Never ask meta-questions (e.g., 'What topic?'). Never switch topics.\n"
         "Keep replies ≤ 2 sentences before the question; the question is the last sentence.\n"
         "After the configured number of student turns, DO NOT ask a question; give a concise final answer (≤ 3 sentences).\n"
         )
 
         messages_llm = [{"role": "system", "content": system_prompt}]
-
-        # tiny few-shot to anchor the shape
-        fewshot = [
-            {"role": "user", "content": "What is life like on a spaceship?"},
-            {"role": "assistant", "content": "Great start! Astronauts keep routines every day. Tiny fact: they must exercise to stay strong. Choose one: A) exercise daily B) skip exercise?"}
-        ]
-        messages_llm += fewshot
 
         # append prior history
         for m in h:
@@ -912,7 +905,7 @@ async def tutor_voice_turn(
             )
         else:
             stage_line = (
-                f"Topic: {topic}. Use the required 3-part shape: Praise → ONE tiny fact → ONE short A/B question."
+                f"Topic: {topic}. Use the required 3-part shape: Praise → ONE tiny fact → ONE short question."
             )
         messages_llm[0]["content"] = system_prompt + "\n" + guardrails + "\n" + stage_line
 
@@ -930,20 +923,20 @@ async def tutor_voice_turn(
                 "Return ONLY valid minified JSON with this shape:\n"
                 '{"praise":"2-6 words",'
                 '"tiny_fact":"ONE short fact that advances exactly this topic",'
-                '"ab_question":"ONE short A/B question ending with a question mark"}'
+                '"ab_question":"ONE short question ending with a question mark"}'
             )
             if is_idk:
-                schema_instructions += " The student said 'I don't know'. Give one easier clue, then a simple A/B question."
+                schema_instructions += " The student said 'I don't know'. Give one easier clue, then a simple question."
 
         # Merge schema and rules into the existing single system message to avoid dilution
         messages_llm[0]["content"] += (
             "\nYou must output JSON ONLY for the next reply.\n"
             "Rules:\n"
             "- Never switch topics and never ask meta-questions.\n"
-            "- For non-final turns: Praise (2–6 words) → ONE tiny fact (≤1 sentence) → ONE short A/B question (end with '?').\n"
+            "- For non-final turns: Praise (2–6 words) → ONE tiny fact (≤1 sentence) → ONE short question (end with '?').\n"
             f"- The tiny_fact MUST directly address the student's last message: '{(last_student or recognized_text).strip()}'. If that last line is a question, give a 1‑sentence direct answer before the A/B question; if it is a statement (e.g., 'bat and ball'), acknowledge it and add ONE small related fact.\n"
             f"- The ab_question MUST reuse at least one noun from the student's last line: '{(last_student or recognized_text).strip()}'.\n"
-            "- For the final turn: Elaborate with a 3–4 sentence answer, no question.\n"
+            "- For the final turn: Elaborate with a 3–4 sentence answer to the whole topic, no question.\n"
             "- Output strictly JSON (no prose, no Markdown, no code fences).\n"
             f"{schema_instructions}"
         )
@@ -990,7 +983,7 @@ async def tutor_voice_turn(
             pieces = [
                 "Great job!",
                 keep or "Tiny fact: one simple habit improves results.",
-                "Choose one: A) this B) that?"
+                "What is one small example?"
             ]
             out = " ".join(pieces).strip()
             return re.sub(r"\s+", " ", out)
